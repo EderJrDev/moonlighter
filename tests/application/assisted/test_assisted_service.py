@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 from moonlighter.application.assisted import service
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
 from moonlighter.application.assisted.results import SheetKind, render_sheet_result
@@ -920,3 +921,20 @@ async def test_paste_on_inhire_marks_the_required_fields(job_factory, monkeypatc
         "Nome completo": True,  # already required stays required
         "Seu CPF": True,  # an unknown required id matches by its own name
     }
+
+
+@pytest.mark.parametrize(
+    ("required_label", "form_label"),
+    [
+        ("Salary expectation", "Expectativa salarial"),
+        ("Salary expectation", "Remuneração pretendida"),
+        ("Salary expectation", "Remuneracao desejada"),
+        ("CV", "Upload your résumé"),
+    ],
+)
+def test_required_ids_match_their_common_portuguese_and_accented_wordings(
+    required_label, form_label
+):
+    question = FormQuestion(label=form_label, kind=QuestionKind.TEXT, required=False)
+    [marked] = service._mark_required([question], (required_label,))
+    assert marked.required is True

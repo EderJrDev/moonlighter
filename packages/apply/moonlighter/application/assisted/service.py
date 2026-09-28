@@ -41,8 +41,17 @@ SOURCE_NOTE_PASTE_IGNORED = (
 # to a question read from a paste, matched as whole words, EN and PT-BR.
 _REQUIRED_KEYWORDS: dict[str, tuple[str, ...]] = {
     "LinkedIn": ("linkedin",),
-    "Salary expectation": ("salary", "salário", "salario", "pretensão", "pretensao"),
-    "CV": ("cv", "currículo", "curriculo", "curriculum", "resume"),
+    "Salary expectation": (
+        "salary",
+        "salário",
+        "salario",
+        "salarial",
+        "pretensão",
+        "pretensao",
+        "remuneração",
+        "remuneracao",
+    ),
+    "CV": ("cv", "currículo", "curriculo", "curriculum", "resume", "résumé"),
     "Location": ("location", "localização", "localizacao", "cidade"),
 }
 

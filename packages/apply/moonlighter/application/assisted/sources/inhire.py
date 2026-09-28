@@ -8,6 +8,7 @@ tell the person up front what the form will insist on. Verified 2026-09-25
 (bancada ats-form-apis).
 """
 
+import logging
 import re
 
 import httpx
@@ -17,6 +18,8 @@ from moonlighter.core.db import Job
 
 API = "https://api.inhire.app/job-posts/public/pages/{job_id}"
 HEADERS = {"User-Agent": "moonlighter/0.1"}
+
+logger = logging.getLogger(__name__)
 
 _URL = re.compile(r"https?://(?P<tenant>[\w-]+)\.inhire\.app/vagas/(?P<job_id>[0-9a-f-]{36})")
 
@@ -48,6 +51,9 @@ async def fetch_inhire_required_fields(
 ) -> tuple[str, ...]:
     response = await client.get(API.format(job_id=job_id), headers={**HEADERS, "X-Tenant": tenant})
     if response.status_code != 200:
+        logger.warning(
+            "inhire job page for %s/%s unavailable: HTTP %s", tenant, job_id, response.status_code
+        )
         return ()
     return parse_required_fields(response.json())
 

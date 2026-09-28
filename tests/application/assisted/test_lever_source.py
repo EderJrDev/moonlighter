@@ -202,11 +202,18 @@ async def test_fetch_reads_the_apply_page():
     assert questions
 
 
-async def test_a_non_200_means_no_form():
+async def test_a_non_200_means_no_form(caplog):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(404))
     ) as client:
         assert await fetch_lever_questions("palantir", "abc", client) == []
+    [record] = [
+        record
+        for record in caplog.records
+        if record.name == "moonlighter.application.assisted.sources.lever"
+    ]
+    assert record.levelname == "WARNING"
+    assert "404" in record.getMessage()
 
 
 async def test_a_malformed_card_reaches_the_person_as_the_paste_hint():

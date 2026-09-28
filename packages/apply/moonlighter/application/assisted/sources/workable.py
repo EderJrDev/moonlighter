@@ -7,6 +7,7 @@ verified against live postings on 2026-09-25 (bancada ats-form-apis). Custom
 career domains were never observed, so only apply.workable.com URLs match.
 """
 
+import logging
 import re
 from typing import Any
 
@@ -17,6 +18,8 @@ from moonlighter.core.db import Job
 
 API = "https://apply.workable.com/api/v1/jobs/{shortcode}/form"
 HEADERS = {"User-Agent": "moonlighter/0.1"}
+
+logger = logging.getLogger(__name__)
 
 _URL = re.compile(r"apply\.workable\.com/(?:[^/]+/)?j/(?P<shortcode>[A-Za-z0-9]+)")
 
@@ -86,6 +89,7 @@ def parse_workable_form(payload: object) -> list[FormQuestion]:
 async def fetch_workable_questions(shortcode: str, client: httpx.AsyncClient) -> list[FormQuestion]:
     response = await client.get(API.format(shortcode=shortcode), headers=HEADERS)
     if response.status_code != 200:
+        logger.warning("workable form for %s unavailable: HTTP %s", shortcode, response.status_code)
         return []
     return parse_workable_form(response.json())
 

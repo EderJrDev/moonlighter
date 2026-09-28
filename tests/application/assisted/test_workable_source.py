@@ -133,11 +133,18 @@ async def test_fetch_reads_the_form_endpoint():
     assert len(questions) == len(_labelled_fields(SEEQ))
 
 
-async def test_a_non_200_means_no_form():
+async def test_a_non_200_means_no_form(caplog):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(404))
     ) as client:
         assert await fetch_workable_questions("x", client) == []
+    [record] = [
+        record
+        for record in caplog.records
+        if record.name == "moonlighter.application.assisted.sources.workable"
+    ]
+    assert record.levelname == "WARNING"
+    assert "404" in record.getMessage()
 
 
 async def test_a_200_html_body_means_no_form():

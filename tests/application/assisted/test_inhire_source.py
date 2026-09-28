@@ -58,11 +58,18 @@ async def test_fetch_sends_the_tenant_header():
     assert seen == [(f"https://api.inhire.app/job-posts/public/pages/{JOB_ID}", "infleet")]
 
 
-async def test_a_non_200_has_no_required_fields():
+async def test_a_non_200_has_no_required_fields(caplog):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(404))
     ) as client:
         assert await fetch_inhire_required_fields("infleet", JOB_ID, client) == ()
+    [record] = [
+        record
+        for record in caplog.records
+        if record.name == "moonlighter.application.assisted.sources.inhire"
+    ]
+    assert record.levelname == "WARNING"
+    assert "404" in record.getMessage()
 
 
 async def test_inhire_never_claims_to_have_the_questions():

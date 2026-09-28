@@ -18,6 +18,7 @@ on its own. jobs.eu.lever.co was never observed and does not match.
 """
 
 import json
+import logging
 import re
 from html.parser import HTMLParser
 from typing import Any
@@ -29,6 +30,8 @@ from moonlighter.core.db import Job
 
 APPLY_PAGE = "https://jobs.lever.co/{company}/{posting_id}/apply"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; moonlighter/0.1)"}
+
+logger = logging.getLogger(__name__)
 
 _URL = re.compile(r"https?://jobs\.lever\.co/(?P<company>[^/]+)/(?P<posting_id>[0-9a-f-]{36})")
 
@@ -162,6 +165,12 @@ async def fetch_lever_questions(
         APPLY_PAGE.format(company=company, posting_id=posting_id), headers=HEADERS
     )
     if response.status_code != 200:
+        logger.warning(
+            "lever apply page for %s/%s unavailable: HTTP %s",
+            company,
+            posting_id,
+            response.status_code,
+        )
         return []
     return parse_lever_form(response.text)
 
