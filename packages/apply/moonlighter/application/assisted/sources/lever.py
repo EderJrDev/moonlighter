@@ -11,8 +11,10 @@ live posting on 2026-09-25 (bancada ats-form-apis). A malformed card makes the
 whole form unreadable: a sheet silently missing a card would claim a complete
 form. For the same reason the `custom-question` `<li>`s are counted, and a count
 that disagrees with the questions read from the cards is markup drift (a renamed
-`[baseTemplate]`, a renamed `fields`), never a smaller form. jobs.eu.lever.co
-was never observed and does not match.
+`[baseTemplate]`, a renamed `fields`), never a smaller form. The optional
+"Additional information" box — the cover-letter slot — is a
+`<textarea name="comments">` outside every question `<li>`, so it is looked for
+on its own. jobs.eu.lever.co was never observed and does not match.
 """
 
 import json
@@ -39,6 +41,9 @@ _CARD_KINDS = {
 }
 _CHOICE_KINDS = (QuestionKind.SINGLE_SELECT, QuestionKind.MULTI_SELECT)
 _REQUIRED_MARK = "✱"
+_ADDITIONAL_INFORMATION = FormQuestion(
+    label="Additional information", kind=QuestionKind.LONG_TEXT, required=False
+)
 
 
 def posting_from_url(url: str) -> tuple[str, str] | None:
@@ -52,6 +57,7 @@ class _LeverFormParser(HTMLParser):
         self.standard_fields: list[tuple[str, bool, bool]] = []  # (label, required, is_file)
         self.card_templates: list[str] = []
         self.custom_question_count = 0
+        self.has_comments = False
         self._question_classes: list[str] | None = None
         self._in_label = False
         self._label_parts: list[str] = []
@@ -62,6 +68,8 @@ class _LeverFormParser(HTMLParser):
         classes = (attributes.get("class") or "").split()
         if tag == "li" and "custom-question" in classes:
             self.custom_question_count += 1
+        if tag == "textarea" and attributes.get("name") == "comments":
+            self.has_comments = True
         if tag == "input" and "[baseTemplate]" in (attributes.get("name") or ""):
             self.card_templates.append(attributes.get("value") or "")
         elif tag == "li" and "application-question" in classes:
@@ -143,7 +151,8 @@ def parse_lever_form(page: str) -> list[FormQuestion]:
             f"Lever form has {parser.custom_question_count} custom questions in the markup "
             f"but {len(card_questions)} were read from card templates"
         )
-    return questions + card_questions
+    additional = [_ADDITIONAL_INFORMATION] if parser.has_comments else []
+    return questions + card_questions + additional
 
 
 async def fetch_lever_questions(

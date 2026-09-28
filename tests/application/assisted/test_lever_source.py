@@ -139,6 +139,22 @@ def test_a_card_whose_fields_are_not_a_list_makes_the_form_unreadable():
         parse_lever_form(_card_page({"fields": 5}, custom_questions=0))
 
 
+def test_the_additional_information_textarea_is_an_optional_long_text_question():
+    # It sits in div.application-additional, outside every li.application-question:
+    # the cover-letter slot, which Alberto always fills even though it is optional.
+    questions = parse_lever_form(PAGE)
+    additional = _by_label(questions, "Additional information")
+    assert additional.kind is QuestionKind.LONG_TEXT
+    assert additional.required is False
+    assert questions[-1] is additional
+
+
+def test_a_page_without_the_comments_textarea_has_no_additional_information_question():
+    page = PAGE.replace('name="comments"', 'name="something-else"')
+    labels = {question.label for question in parse_lever_form(page)}
+    assert "Additional information" not in labels
+
+
 def test_a_page_without_a_form_has_no_questions():
     assert parse_lever_form("<html><body>This posting is closed.</body></html>") == []
 
