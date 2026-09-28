@@ -898,7 +898,7 @@ async def test_paste_on_inhire_marks_the_required_fields(job_factory, monkeypatc
         FormQuestion(label="Pretensão salarial", kind=QuestionKind.TEXT, required=False),
         FormQuestion(label="Anexe seu currículo", kind=QuestionKind.FILE, required=False),
         FormQuestion(label="Conte sobre você", kind=QuestionKind.LONG_TEXT, required=False),
-        FormQuestion(label="Voice over IP experience", kind=QuestionKind.TEXT, required=False),
+        FormQuestion(label="OpenCV experience", kind=QuestionKind.TEXT, required=False),
         FormQuestion(label="Nome completo", kind=QuestionKind.TEXT, required=True),
         FormQuestion(label="Seu CPF", kind=QuestionKind.TEXT, required=False),
     ]
@@ -916,7 +916,7 @@ async def test_paste_on_inhire_marks_the_required_fields(job_factory, monkeypatc
         "Pretensão salarial": True,
         "Anexe seu currículo": True,
         "Conte sobre você": False,
-        "Voice over IP experience": False,  # "cv" must match as a word, not inside "over"/"IP"
+        "OpenCV experience": False,  # "cv" inside "OpenCV" is not the word "cv"
         "Nome completo": True,  # already required stays required
         "Seu CPF": True,  # an unknown required id matches by its own name
     }
