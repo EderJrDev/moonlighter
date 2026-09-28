@@ -120,7 +120,7 @@ def test_is_sensitive_label_false_for_ordinary_screening_questions(label):
 # ── load_answer_bank ──────────────────────────────────────────────────────────
 
 
-def test_load_answer_bank_returns_normalized_question_to_answer_map(tmp_db):
+def test_load_answer_bank_returns_normalized_question_to_answer_map(temporary_database):
     init_db()
     AnswerBankEntry.create(
         normalized_question="are you authorized to work in brazil",
@@ -131,7 +131,7 @@ def test_load_answer_bank_returns_normalized_question_to_answer_map(tmp_db):
     assert load_answer_bank(max_age_days=None) == {"are you authorized to work in brazil": "Yes"}
 
 
-def test_load_answer_bank_empty_table_returns_empty_dict(tmp_db):
+def test_load_answer_bank_empty_table_returns_empty_dict(temporary_database):
     init_db()
     assert load_answer_bank(max_age_days=None) == {}
 
@@ -139,7 +139,7 @@ def test_load_answer_bank_empty_table_returns_empty_dict(tmp_db):
 # ── promote_application ───────────────────────────────────────────────────────
 
 
-def test_promote_application_creates_a_new_entry(tmp_db):
+def test_promote_application_creates_a_new_entry(temporary_database):
     init_db()
     job_cache = {"Are you authorized to work in Brazil?": {"answer": "Yes", "kind": "boolean"}}
     promote_application(job_cache, source_job_id=42)
@@ -151,14 +151,14 @@ def test_promote_application_creates_a_new_entry(tmp_db):
     assert row.source_job_id == 42
 
 
-def test_promote_application_skips_long_text(tmp_db):
+def test_promote_application_skips_long_text(temporary_database):
     init_db()
     job_cache = {"Why do you want to work here?": {"answer": "a custom essay", "kind": "long_text"}}
     promote_application(job_cache, source_job_id=1)
     assert AnswerBankEntry.select().count() == 0
 
 
-def test_promote_application_overwrites_an_existing_entry(tmp_db):
+def test_promote_application_overwrites_an_existing_entry(temporary_database):
     init_db()
     AnswerBankEntry.create(
         normalized_question="are you authorized to work in brazil",
@@ -175,7 +175,7 @@ def test_promote_application_overwrites_an_existing_entry(tmp_db):
     assert row.source_job_id == 2
 
 
-def test_promote_application_ignores_legacy_flat_shaped_entries(tmp_db):
+def test_promote_application_ignores_legacy_flat_shaped_entries(temporary_database):
     # tests/test_server.py's create_application() fixture defaults form_data to
     # '{"Q": "A"}' — a flat label->string shape that predates this feature and is
     # used by many unrelated update_status tests. promote_application must not
@@ -186,7 +186,7 @@ def test_promote_application_ignores_legacy_flat_shaped_entries(tmp_db):
 
 
 @pytest.mark.parametrize("label", ["Gender", "Veteran Status", "References"])
-def test_promote_application_skips_a_sensitive_label(tmp_db, label):
+def test_promote_application_skips_a_sensitive_label(temporary_database, label):
     # Kind alone does not protect these: a demographic or references question is
     # usually TEXT, which IS bank-eligible. Nothing deterministic stops the LLM
     # guessing an answer to such a label, and a guess must not be replayed at
@@ -196,7 +196,7 @@ def test_promote_application_skips_a_sensitive_label(tmp_db, label):
     assert AnswerBankEntry.select().count() == 0
 
 
-def test_promote_application_ignores_invalid_kind(tmp_db):
+def test_promote_application_ignores_invalid_kind(temporary_database):
     init_db()
     job_cache = {"A question": {"answer": "some answer", "kind": "invalid_kind"}}
     promote_application(job_cache, source_job_id=1)
@@ -218,7 +218,7 @@ def _entry(question: str, answer: str, days_old: int) -> None:
     )
 
 
-def test_load_answer_bank_skips_entries_older_than_max_age(tmp_db):
+def test_load_answer_bank_skips_entries_older_than_max_age(temporary_database):
     # "When can you start?" gets banked like any boolean/text answer and would
     # replay verbatim months later. updated_at is refreshed on every promotion,
     # so age here means "since the last time this answer was actually used".
@@ -228,7 +228,7 @@ def test_load_answer_bank_skips_entries_older_than_max_age(tmp_db):
     assert load_answer_bank(max_age_days=90) == {"notice period": "30 days"}
 
 
-def test_load_answer_bank_with_no_max_age_keeps_everything(tmp_db):
+def test_load_answer_bank_with_no_max_age_keeps_everything(temporary_database):
     init_db()
     _entry("when can you start", "in two weeks", days_old=400)
     assert load_answer_bank(max_age_days=None) == {"when can you start": "in two weeks"}
@@ -237,7 +237,7 @@ def test_load_answer_bank_with_no_max_age_keeps_everything(tmp_db):
 # ── inspection and editing ────────────────────────────────────────────────────
 
 
-def test_list_entries_returns_rows_most_recently_used_first(tmp_db):
+def test_list_entries_returns_rows_most_recently_used_first(temporary_database):
     init_db()
     _entry("notice period", "30 days", days_old=5)
     _entry("when can you start", "in two weeks", days_old=1)
@@ -247,21 +247,21 @@ def test_list_entries_returns_rows_most_recently_used_first(tmp_db):
     ]
 
 
-def test_forget_normalises_the_question_and_deletes_the_row(tmp_db):
+def test_forget_normalises_the_question_and_deletes_the_row(temporary_database):
     init_db()
     _entry("are you authorized to work in brazil", "Yes", days_old=1)
     assert forget("  Are You Authorized to Work in Brazil?  ") is True
     assert AnswerBankEntry.select().count() == 0
 
 
-def test_forget_reports_when_nothing_matched(tmp_db):
+def test_forget_reports_when_nothing_matched(temporary_database):
     init_db()
     _entry("notice period", "30 days", days_old=1)
     assert forget("something else") is False
     assert AnswerBankEntry.select().count() == 1
 
 
-def test_render_answer_bank_marks_entries_past_max_age(tmp_db):
+def test_render_answer_bank_marks_entries_past_max_age(temporary_database):
     # The operator's real question is "why wasn't this replayed?" — the
     # listing answers it inline instead of making them do date arithmetic.
     init_db()
@@ -276,6 +276,6 @@ def test_render_answer_bank_marks_entries_past_max_age(tmp_db):
     assert "expired" not in fresh_line
 
 
-def test_render_answer_bank_empty(tmp_db):
+def test_render_answer_bank_empty(temporary_database):
     init_db()
     assert render_answer_bank([], max_age_days=90) == "The answer bank is empty."

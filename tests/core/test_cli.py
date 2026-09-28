@@ -7,7 +7,7 @@ from moonlighter.core.config import ConfigError
 from moonlighter.core.db import Job, init_db
 
 
-def test_job_to_dict_projects_every_column_with_iso_datetimes(tmp_db):
+def test_job_to_dict_projects_every_column_with_iso_datetimes(temporary_database):
     from moonlighter.core.cli import job_to_dict
 
     init_db()
@@ -20,12 +20,12 @@ def test_job_to_dict_projects_every_column_with_iso_datetimes(tmp_db):
         status="new",
         posted_at=datetime(2026, 9, 1, 12, 0, 0),
     )
-    d = job_to_dict(job)
-    assert d["id"] == job.id
-    assert d["company"] == "Acme"
-    assert d["score"] == 8.5
-    assert d["posted_at"] == "2026-09-01T12:00:00"
-    assert d["closed_at"] is None
+    payload = job_to_dict(job)
+    assert payload["id"] == job.id
+    assert payload["company"] == "Acme"
+    assert payload["score"] == 8.5
+    assert payload["posted_at"] == "2026-09-01T12:00:00"
+    assert payload["closed_at"] is None
     # Every persisted column is present: a consumer never has to go back to the DB.
     for column in (
         "source",
@@ -44,16 +44,16 @@ def test_job_to_dict_projects_every_column_with_iso_datetimes(tmp_db):
         "status",
         "found_at",
     ):
-        assert column in d
+        assert column in payload
 
 
 def test_emit_writes_exactly_one_json_line_to_stdout_and_returns_the_code(capsys):
     from moonlighter.core.cli import emit
 
     code = emit({"kind": "evaluated", "saved": []}, 0)
-    out, err = capsys.readouterr()
+    out, error_output = capsys.readouterr()
     assert code == 0
-    assert err == ""
+    assert error_output == ""
     assert out.endswith("\n") and out.count("\n") == 1
     assert json.loads(out) == {"kind": "evaluated", "saved": []}
 
@@ -165,11 +165,13 @@ def test_run_default_expected_and_usage_are_empty_and_match_nothing(capsys):
     assert out["kind"] == "error"
 
 
-def test_bootstrap_loads_config_and_profile_and_inits_the_db(tmp_db, monkeypatch, tmp_path):
+def test_bootstrap_loads_config_and_profile_and_inits_the_db(
+    temporary_database, monkeypatch, tmp_path
+):
     from moonlighter.core import cli
 
     monkeypatch.setattr(cli, "load_config", lambda: {"score_threshold": 7.0})
-    monkeypatch.setattr(cli, "validate_config", lambda c: None)
+    monkeypatch.setattr(cli, "validate_config", lambda config: None)
     monkeypatch.setattr(cli, "load_profile", lambda: {"name": "Jane"})
     monkeypatch.setattr(cli, "harden_permissions", lambda: [])
     config, profile = cli.bootstrap()
@@ -178,14 +180,14 @@ def test_bootstrap_loads_config_and_profile_and_inits_the_db(tmp_db, monkeypatch
     Job.select().count()  # init_db ran: the table exists
 
 
-def test_bootstrap_tolerates_a_missing_profile(tmp_db, monkeypatch):
+def test_bootstrap_tolerates_a_missing_profile(temporary_database, monkeypatch):
     from moonlighter.core import cli
 
     def _missing():
         raise FileNotFoundError
 
     monkeypatch.setattr(cli, "load_config", lambda: {})
-    monkeypatch.setattr(cli, "validate_config", lambda c: None)
+    monkeypatch.setattr(cli, "validate_config", lambda config: None)
     monkeypatch.setattr(cli, "load_profile", _missing)
     monkeypatch.setattr(cli, "harden_permissions", lambda: [])
     assert cli.bootstrap() == ({}, {})
@@ -200,17 +202,17 @@ def test_json_argument_parser_error_emits_usage_error_json_on_stdout_and_exits_2
 
     parser = JsonArgumentParser(prog="x")
     parser.add_argument("--flag")
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parser.parse_args(["--bogus"])
-    assert exc.value.code == 2
-    out, err = capsys.readouterr()
+    assert exit_info.value.code == 2
+    out, error_output = capsys.readouterr()
     assert out.endswith("\n") and out.count("\n") == 1
     payload = json.loads(out)
     assert payload["kind"] == "usage_error"
     # argparse's own message names the unrecognized argument -- assert the
     # contract (kind + presence), not argparse's exact wording.
     assert "bogus" in payload["error"]
-    assert err != ""  # usage prose still goes to stderr, unchanged
+    assert error_output != ""  # usage prose still goes to stderr, unchanged
 
 
 def test_json_argument_parser_help_still_exits_0_on_stdout(capsys):
@@ -219,31 +221,33 @@ def test_json_argument_parser_help_still_exits_0_on_stdout(capsys):
     from moonlighter.core.cli import JsonArgumentParser
 
     parser = JsonArgumentParser(prog="x")
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parser.parse_args(["--help"])
-    assert exc.value.code == 0
+    assert exit_info.value.code == 0
     out, _err = capsys.readouterr()
     assert "usage" in out
     with pytest.raises(json.JSONDecodeError):
         json.loads(out)
 
 
-def test_bootstrap_prints_permission_warnings_to_stderr_not_stdout(tmp_db, monkeypatch, capsys):
+def test_bootstrap_prints_permission_warnings_to_stderr_not_stdout(
+    temporary_database, monkeypatch, capsys
+):
     from moonlighter.core import cli
 
     monkeypatch.setattr(cli, "load_config", lambda: {})
-    monkeypatch.setattr(cli, "validate_config", lambda c: None)
+    monkeypatch.setattr(cli, "validate_config", lambda config: None)
     monkeypatch.setattr(cli, "load_profile", lambda: {})
     monkeypatch.setattr(cli, "harden_permissions", lambda: ["config.yaml was world-readable"])
     cli.bootstrap()
-    out, err = capsys.readouterr()
+    out, error_output = capsys.readouterr()
     assert out == ""
-    assert "world-readable" in err
+    assert "world-readable" in error_output
 
 
 def test_doctor_payload_reports_paths_slices_and_a_valid_config(monkeypatch, tmp_path):
-    # No tmp_db here: doctor_payload() only checks db path existence, never
-    # opens the DB, and tmp_db's MOONLIGHTER_DB_PATH override would shadow the
+    # No temporary_database here: doctor_payload() only checks db path existence, never
+    # opens the DB, and temporary_database's MOONLIGHTER_DB_PATH override would shadow the
     # MOONLIGHTER_HOME set below, breaking the "path ends in moonlighter.db"
     # assertion.
     import json
@@ -270,10 +274,12 @@ def test_doctor_payload_reports_paths_slices_and_a_valid_config(monkeypatch, tmp
     assert payload["db"]["path"].endswith("moonlighter.db")
     assert set(payload["slices"]) == {"scan", "apply", "email", "full"}
     assert payload["commands"] == sorted(payload["commands"])
-    assert {c["name"] for c in payload["capabilities"]["live"]} >= {"discovery"}
+    assert {capability["name"] for capability in payload["capabilities"]["live"]} >= {"discovery"}
 
 
-def test_doctor_payload_reports_an_invalid_config_and_exits_1(tmp_db, monkeypatch, tmp_path):
+def test_doctor_payload_reports_an_invalid_config_and_exits_1(
+    temporary_database, monkeypatch, tmp_path
+):
     from moonlighter.core import cli
 
     (tmp_path / "config.yaml").write_text("nope: 1\n")
@@ -284,7 +290,9 @@ def test_doctor_payload_reports_an_invalid_config_and_exits_1(tmp_db, monkeypatc
     assert "unknown config key 'nope'" in payload["config"]["error"]
 
 
-def test_doctor_payload_reports_a_missing_config_and_exits_1(tmp_db, monkeypatch, tmp_path):
+def test_doctor_payload_reports_a_missing_config_and_exits_1(
+    temporary_database, monkeypatch, tmp_path
+):
     from moonlighter.core import cli
 
     monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
@@ -293,7 +301,7 @@ def test_doctor_payload_reports_a_missing_config_and_exits_1(tmp_db, monkeypatch
 
 
 def test_doctor_payload_live_and_missing_capabilities_share_the_same_keys(
-    tmp_db, monkeypatch, tmp_path
+    temporary_database, monkeypatch, tmp_path
 ):
     # One payload, two object shapes was the bug: live[] carried name/commands
     # /summary, missing[] carried name/needs/summary. A consumer keying off
@@ -310,8 +318,12 @@ def test_doctor_payload_live_and_missing_capabilities_share_the_same_keys(
     ):
         payload, _code = cli.doctor_payload()
 
-    live_by_name = {c["name"]: c for c in payload["capabilities"]["live"]}
-    missing_by_name = {c["name"]: c for c in payload["capabilities"]["missing"]}
+    live_by_name = {
+        capability["name"]: capability for capability in payload["capabilities"]["live"]
+    }
+    missing_by_name = {
+        capability["name"]: capability for capability in payload["capabilities"]["missing"]
+    }
 
     assert live_by_name["discovery"] == {
         "name": "discovery",
@@ -333,7 +345,7 @@ def test_doctor_payload_live_and_missing_capabilities_share_the_same_keys(
 
 
 def test_doctor_payload_reports_a_malformed_yaml_config_instead_of_crashing(
-    tmp_db, monkeypatch, tmp_path
+    temporary_database, monkeypatch, tmp_path
 ):
     # load_config() reaches yaml.safe_load() before validate_config() ever
     # runs -- a syntax error there is a yaml.YAMLError, not a ConfigError, and
@@ -353,7 +365,7 @@ def test_doctor_payload_reports_a_malformed_yaml_config_instead_of_crashing(
 
 
 def test_doctor_payload_reports_an_unreadable_config_instead_of_crashing(
-    tmp_db, monkeypatch, tmp_path
+    temporary_database, monkeypatch, tmp_path
 ):
     # A chmod-000 config.yaml makes read_text() raise PermissionError, which
     # is neither a ConfigError nor a yaml.YAMLError -- doctor_payload() must

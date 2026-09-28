@@ -3,15 +3,15 @@ from moonlighter.core.config import ConfigError
 from moonlighter.server import AppContext, lifespan, mcp
 
 
-async def test_lifespan_yields_populated_appcontext(tmp_db):
-    async with lifespan(mcp) as ctx:
-        assert isinstance(ctx, AppContext)
-        assert isinstance(ctx.config, dict)
-        assert ctx.llm_caller is not None
-        assert isinstance(ctx.startup_warnings, list)
+async def test_lifespan_yields_populated_appcontext(temporary_database):
+    async with lifespan(mcp) as app_context:
+        assert isinstance(app_context, AppContext)
+        assert isinstance(app_context.config, dict)
+        assert app_context.llm_caller is not None
+        assert isinstance(app_context.startup_warnings, list)
 
 
-async def test_lifespan_rejects_invalid_config(tmp_db, monkeypatch):
+async def test_lifespan_rejects_invalid_config(temporary_database, monkeypatch):
     import moonlighter.server as server
 
     bad = {"scan_concurrency": "five"}  # will fail validate_config
@@ -21,12 +21,12 @@ async def test_lifespan_rejects_invalid_config(tmp_db, monkeypatch):
             pass  # must raise before yielding
 
 
-async def test_lifespan_prints_permission_warnings(tmp_db, monkeypatch, capsys):
+async def test_lifespan_prints_permission_warnings(temporary_database, monkeypatch, capsys):
     import moonlighter.server as server
 
     monkeypatch.setattr(server, "harden_permissions", lambda: ["could not chmod ~/.moonlighter"])
-    async with lifespan(mcp) as ctx:
-        assert ctx.permission_warnings == ["could not chmod ~/.moonlighter"]
+    async with lifespan(mcp) as app_context:
+        assert app_context.permission_warnings == ["could not chmod ~/.moonlighter"]
     assert "could not chmod ~/.moonlighter" in capsys.readouterr().err
 
 
@@ -39,10 +39,24 @@ def test_importing_server_has_no_side_effects(monkeypatch):
     import moonlighter.core.db as db
     import moonlighter.core.log as log_mod
 
-    monkeypatch.setattr(cfg, "load_config", lambda *a, **k: calls.append("load_config") or {})
-    monkeypatch.setattr(db, "init_db", lambda *a, **k: calls.append("init_db"))
-    monkeypatch.setattr(cfg, "harden_permissions", lambda *a, **k: calls.append("harden") or [])
-    monkeypatch.setattr(log_mod, "setup", lambda *a, **k: calls.append("setup_logging"))
+    monkeypatch.setattr(
+        cfg,
+        "load_config",
+        lambda *positional_arguments, **keyword_arguments: calls.append("load_config") or {},
+    )
+    monkeypatch.setattr(
+        db, "init_db", lambda *positional_arguments, **keyword_arguments: calls.append("init_db")
+    )
+    monkeypatch.setattr(
+        cfg,
+        "harden_permissions",
+        lambda *positional_arguments, **keyword_arguments: calls.append("harden") or [],
+    )
+    monkeypatch.setattr(
+        log_mod,
+        "setup",
+        lambda *positional_arguments, **keyword_arguments: calls.append("setup_logging"),
+    )
     sys.modules.pop("moonlighter.server", None)
     importlib.import_module("moonlighter.server")
     assert calls == []  # importing the server must not load config / init db / harden perms

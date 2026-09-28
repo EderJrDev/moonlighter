@@ -9,7 +9,7 @@ from tests.discovery.test_service import _raw, _run_scan
 
 
 @pytest.fixture
-def three_jobs(tmp_db):
+def three_jobs(temporary_database):
     init_db()
     return [
         Job.create(
@@ -184,21 +184,21 @@ def _patched_scanner(raw_jobs):
     )
 
 
-async def test_scan_company_unknown_source_is_unchanged(tmp_db, snapshot_text):
+async def test_scan_company_unknown_source_is_unchanged(temporary_database, snapshot_text):
     init_db()
     with _patched_scanner([]):
         out = render_scan_report(await scan_company("lever", "acme", CONFIG, {}, MagicMock()))
     snapshot_text(out, "company_unknown_source")
 
 
-async def test_scan_company_no_open_jobs_is_unchanged(tmp_db, snapshot_text):
+async def test_scan_company_no_open_jobs_is_unchanged(temporary_database, snapshot_text):
     init_db()
     with _patched_scanner([]):
         out = render_scan_report(await scan_company("greenhouse", "acme", CONFIG, {}, MagicMock()))
     snapshot_text(out, "company_no_open_jobs")
 
 
-async def test_scan_company_all_already_known_is_unchanged(tmp_db, snapshot_text):
+async def test_scan_company_all_already_known_is_unchanged(temporary_database, snapshot_text):
     init_db()
     known = _raw(1)  # url is https://x.com/scan/1
     # _drop_already_seen only checks ScanLog, not Job -- a Job row alone would
@@ -210,7 +210,9 @@ async def test_scan_company_all_already_known_is_unchanged(tmp_db, snapshot_text
     snapshot_text(out, "company_all_known")
 
 
-async def test_scan_company_with_new_jobs_is_unchanged(tmp_db, snapshot_text, three_jobs):
+async def test_scan_company_with_new_jobs_is_unchanged(
+    temporary_database, snapshot_text, three_jobs
+):
     init_db()
     fresh = _raw(99)
     with (
@@ -232,7 +234,7 @@ async def test_scan_company_with_new_jobs_is_unchanged(tmp_db, snapshot_text, th
 
 
 async def test_scan_and_evaluate_end_to_end_pins_the_full_output_with_archive(
-    tmp_db, snapshot_text
+    temporary_database, snapshot_text
 ):
     init_db()
     out = await _run_scan([_raw(1)])
@@ -259,23 +261,23 @@ def test_scan_report_to_dict_is_json_serialisable_and_carries_the_facts(three_jo
         stats={"greenhouse": SourceStats(companies=3, jobs=2, errors=1)},
         company="acme",
     )
-    d = scan_report_to_dict(report)
-    json.dumps(d)  # raises on anything non-serialisable
-    assert d["kind"] == "evaluated"
-    assert d["spend_hit"] is True
-    assert d["threshold"] == 7.0
-    assert d["company"] == "acme"
-    assert [j["title"] for j in d["saved"]] == [j.title for j in three_jobs]
-    assert d["saved"][0]["score"] == 9.0
-    assert d["archive"] == {
+    payload = scan_report_to_dict(report)
+    json.dumps(payload)  # raises on anything non-serialisable
+    assert payload["kind"] == "evaluated"
+    assert payload["spend_hit"] is True
+    assert payload["threshold"] == 7.0
+    assert payload["company"] == "acme"
+    assert [entry["title"] for entry in payload["saved"]] == [job.title for job in three_jobs]
+    assert payload["saved"][0]["score"] == 9.0
+    assert payload["archive"] == {
         "archived": [{"id": "1", "company": "Acme"}],
         "aged": [],
         "max_age_days": 30,
         "failed_companies": [],
     }
-    assert d["stats"] == {"greenhouse": {"companies": 3, "jobs": 2, "errors": 1}}
-    assert d["warning"] == "⚠️  greenhouse: 0 jobs"
-    assert d["error"] is None
+    assert payload["stats"] == {"greenhouse": {"companies": 3, "jobs": 2, "errors": 1}}
+    assert payload["warning"] == "⚠️  greenhouse: 0 jobs"
+    assert payload["error"] is None
 
 
 def test_scan_report_to_dict_pins_the_found_but_known_key_on_all_known(three_jobs):
@@ -286,9 +288,9 @@ def test_scan_report_to_dict_pins_the_found_but_known_key_on_all_known(three_job
     from moonlighter.discovery.results import scan_report_to_dict
 
     report = ScanReport(kind=ScanKind.ALL_KNOWN, threshold=7.0, company="acme", found_but_known=3)
-    d = scan_report_to_dict(report)
-    assert "found_but_known" in d
-    assert d["found_but_known"] == 3
+    payload = scan_report_to_dict(report)
+    assert "found_but_known" in payload
+    assert payload["found_but_known"] == 3
 
 
 def test_scan_report_stats_is_not_rendered(three_jobs, snapshot_text):
