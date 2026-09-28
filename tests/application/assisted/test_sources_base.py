@@ -53,3 +53,25 @@ async def test_a_source_whose_body_cannot_be_read_has_no_questions():
     async with httpx.AsyncClient() as client:
         assert await questions_or_empty(match, client) == []
         assert await required_fields_or_empty(match, client) == ()
+
+
+class _MisshapenSource:
+    name = "misshapen"
+
+    def match(self, job):
+        return None
+
+    async def questions(self, match, client):
+        raise TypeError("'int' object is not iterable")
+
+    async def required_fields(self, match, client):
+        raise AttributeError("'int' object has no attribute 'get'")
+
+
+async def test_a_source_whose_payload_has_an_unexpected_shape_has_no_questions():
+    # Workable `{"fields": 5}`, Greenhouse `questions: ["x"]`: a shape the parser
+    # never anticipated must reach the person as the paste hint, not a crash.
+    match = SourceMatch(_MisshapenSource(), ())
+    async with httpx.AsyncClient() as client:
+        assert await questions_or_empty(match, client) == []
+        assert await required_fields_or_empty(match, client) == ()

@@ -39,10 +39,14 @@ class QuestionSource(Protocol):
 
 
 async def questions_or_empty(match: SourceMatch, client: httpx.AsyncClient) -> list[FormQuestion]:
-    """A source that cannot be reached or read has no form: the caller asks for a paste."""
+    """A source that cannot be reached or read has no form: the caller asks for a paste.
+
+    Any exception, not just transport and decoding errors: a payload whose shape the
+    parser never anticipated raises TypeError/AttributeError, and that must reach the
+    person as the paste hint, never as a crashed `prepare_application`."""
     try:
         return await match.source.questions(match, client)
-    except (httpx.HTTPError, ValueError) as error:
+    except Exception as error:
         logger.warning("%s questions unavailable: %s", match.source.name, error, exc_info=True)
         return []
 
@@ -52,7 +56,7 @@ async def required_fields_or_empty(
 ) -> tuple[str, ...]:
     try:
         return await match.source.required_fields(match, client)
-    except (httpx.HTTPError, ValueError) as error:
+    except Exception as error:
         logger.warning(
             "%s required fields unavailable: %s", match.source.name, error, exc_info=True
         )
