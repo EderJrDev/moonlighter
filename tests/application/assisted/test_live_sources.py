@@ -6,6 +6,7 @@ so it does not rot as postings close. A skipped e2e counts as a failure here.
 
 import httpx
 import pytest
+from moonlighter.application.assisted.questions import QuestionKind
 from moonlighter.application.assisted.sources.base import (
     SourceMatch,
     questions_or_empty,
@@ -38,6 +39,14 @@ async def test_lever_live_form_has_a_required_question():
             SourceMatch(LeverSource(), ("palantir", posting["id"])), client
         )
     assert any(question.required for question in questions), questions
+    # The standard fields alone satisfy the assertion above; only a card yields a
+    # choice or a long-text question, so this one proves the cards were read.
+    # "Additional information" is long text from the standard markup, not a card.
+    assert any(
+        (question.is_choice or question.kind is QuestionKind.LONG_TEXT)
+        and question.label != "Additional information"
+        for question in questions
+    ), f"no question came from a Lever card — the custom questions were not read: {questions}"
 
 
 async def test_inhire_live_job_lists_required_fields():

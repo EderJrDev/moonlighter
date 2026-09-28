@@ -29,6 +29,21 @@ def _by_label(questions, label):
     return next(question for question in questions if question.label == label)
 
 
+def _card_page(card, custom_questions=None):
+    """A page carrying one card template and, like the real page, one custom-question
+    `li` per card field with text (or `custom_questions` of them when given)."""
+    if custom_questions is None:
+        custom_questions = sum(
+            1 for field in card.get("fields") or [] if isinstance(field, dict) and field.get("text")
+        )
+    value = html.escape(json.dumps(card), quote=True)
+    items = '<li class="application-question custom-question"></li>' * custom_questions
+    return (
+        f'<form><input type="hidden" value="{value}" name="cards[1][baseTemplate]">'
+        f"<ul>{items}</ul></form>"
+    )
+
+
 def test_standard_fields_carry_the_asterisk_as_required():
     questions = parse_lever_form(PAGE)
     assert _by_label(questions, "Full name").required is True
@@ -80,16 +95,13 @@ def test_each_card_type(card_type, expected):
             }
         ]
     }
-    value = html.escape(json.dumps(card), quote=True)
-    page = f'<form><input type="hidden" value="{value}" name="cards[1][baseTemplate]"></form>'
-    [question] = parse_lever_form(page)
+    [question] = parse_lever_form(_card_page(card))
     assert question.kind is expected
 
 
 def test_a_choice_card_without_options_degrades_to_long_text():
     card = {"fields": [{"type": "dropdown", "text": "Q", "required": True, "options": []}]}
-    page = f'<form><input value="{html.escape(json.dumps(card), quote=True)}" name="cards[1][baseTemplate]"></form>'
-    [question] = parse_lever_form(page)
+    [question] = parse_lever_form(_card_page(card))
     assert question.kind is QuestionKind.LONG_TEXT
 
 
@@ -97,6 +109,34 @@ def test_a_malformed_card_makes_the_form_unreadable():
     page = PAGE.replace('name="cards[', 'data-broken="1" value="{not json" name="cards[', 1)
     with pytest.raises(ValueError):
         parse_lever_form(page)
+
+
+def test_the_real_page_reads_every_custom_question_from_its_cards():
+    custom_questions_in_markup = PAGE.count('class="application-question custom-question"')
+    assert custom_questions_in_markup == 12
+    card_labels = {field["text"] for field in _card_fields(PAGE)}
+    read_from_cards = [
+        question for question in parse_lever_form(PAGE) if question.label in card_labels
+    ]
+    assert len(read_from_cards) == custom_questions_in_markup
+
+
+def test_custom_questions_in_the_markup_without_a_card_template_make_the_form_unreadable():
+    # The drift the markup can suffer silently: Lever renames `[baseTemplate]`, every
+    # card vanishes, and the sheet would claim a complete form of standard fields.
+    page = PAGE.replace("[baseTemplate]", "[template]")
+    with pytest.raises(ValueError, match="12 custom questions in the markup but 0 were read"):
+        parse_lever_form(page)
+
+
+def test_a_card_without_fields_makes_the_form_unreadable():
+    with pytest.raises(ValueError):
+        parse_lever_form(_card_page({"questions": []}, custom_questions=0))
+
+
+def test_a_card_whose_fields_are_not_a_list_makes_the_form_unreadable():
+    with pytest.raises(ValueError):
+        parse_lever_form(_card_page({"fields": 5}, custom_questions=0))
 
 
 def test_a_page_without_a_form_has_no_questions():
@@ -111,8 +151,7 @@ def test_a_card_that_is_not_an_object_makes_the_form_unreadable():
 
 def test_card_fields_without_text_are_skipped():
     card = {"fields": ["not a field", {"type": "text", "required": True}]}
-    page = f'<form><input value="{html.escape(json.dumps(card), quote=True)}" name="cards[1][baseTemplate]"></form>'
-    assert parse_lever_form(page) == []
+    assert parse_lever_form(_card_page(card)) == []
 
 
 def test_an_empty_standard_label_is_skipped():

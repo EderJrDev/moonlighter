@@ -9,7 +9,10 @@ field's `<li>` also has the class `resume`. Custom questions are cards: a hidden
 are `custom-question` and are read from the JSON, not the markup. Verified on a
 live posting on 2026-09-25 (bancada ats-form-apis). A malformed card makes the
 whole form unreadable: a sheet silently missing a card would claim a complete
-form. jobs.eu.lever.co was never observed and does not match.
+form. For the same reason the `custom-question` `<li>`s are counted, and a count
+that disagrees with the questions read from the cards is markup drift (a renamed
+`[baseTemplate]`, a renamed `fields`), never a smaller form. jobs.eu.lever.co
+was never observed and does not match.
 """
 
 import json
@@ -48,6 +51,7 @@ class _LeverFormParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.standard_fields: list[tuple[str, bool, bool]] = []  # (label, required, is_file)
         self.card_templates: list[str] = []
+        self.custom_question_count = 0
         self._question_classes: list[str] | None = None
         self._in_label = False
         self._label_parts: list[str] = []
@@ -56,6 +60,8 @@ class _LeverFormParser(HTMLParser):
     def handle_starttag(self, tag: str, attribute_pairs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attribute_pairs)
         classes = (attributes.get("class") or "").split()
+        if tag == "li" and "custom-question" in classes:
+            self.custom_question_count += 1
         if tag == "input" and "[baseTemplate]" in (attributes.get("name") or ""):
             self.card_templates.append(attributes.get("value") or "")
         elif tag == "li" and "application-question" in classes:
@@ -88,8 +94,11 @@ def _card_questions(template: str) -> list[FormQuestion]:
     card = json.loads(template)
     if not isinstance(card, dict):
         raise ValueError("a Lever card template is not a JSON object")
+    fields = card.get("fields")
+    if not isinstance(fields, list):
+        raise ValueError("a Lever card template has no list of fields")
     questions: list[FormQuestion] = []
-    for field in card.get("fields") or []:
+    for field in fields:
         if not isinstance(field, dict) or not field.get("text"):
             continue
         kind = _CARD_KINDS.get(str(field.get("type")), QuestionKind.LONG_TEXT)
@@ -126,9 +135,15 @@ def parse_lever_form(page: str) -> list[FormQuestion]:
         )
         for label, required, is_file in parser.standard_fields
     ]
-    for template in parser.card_templates:
-        questions.extend(_card_questions(template))
-    return questions
+    card_questions = [
+        question for template in parser.card_templates for question in _card_questions(template)
+    ]
+    if len(card_questions) != parser.custom_question_count:
+        raise ValueError(
+            f"Lever form has {parser.custom_question_count} custom questions in the markup "
+            f"but {len(card_questions)} were read from card templates"
+        )
+    return questions + card_questions
 
 
 async def fetch_lever_questions(
