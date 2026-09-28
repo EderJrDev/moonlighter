@@ -48,13 +48,17 @@ def is_spend_limit(exc: Exception) -> bool:
 def make_caller(config: dict[str, Any]) -> LLMCaller:
     """Return the appropriate LLM caller based on config['llm_backend'].
 
-    llm_backend: "cli"  → uses the `claude -p` CLI (no API key required)
-    llm_backend: "api"  → uses the Anthropic Python SDK (requires ANTHROPIC_API_KEY)
+    llm_backend: "cli"     → uses the `claude -p` CLI (no API key required)
+    llm_backend: "api"     → uses the Anthropic Python SDK (requires ANTHROPIC_API_KEY)
+    llm_backend: "cursor"  → uses the Cursor `agent --print` CLI (`agent login`)
     Default: "cli". Anything else raises ConfigError rather than silently
     selecting a backend the user did not ask for.
     """
-    if llm_backend(config) == "cli":
+    backend = llm_backend(config)
+    if backend == "cli":
         return _call_cli
+    if backend == "cursor":
+        return _call_cursor
     return make_api_caller()
 
 
@@ -123,6 +127,67 @@ async def _call_cli(prompt: str, model: str, cache_prefix: str | None = None) ->
         if proc.returncode != 0:
             detail = stderr.decode().strip() or stdout.decode().strip()
             raise RuntimeError(f"claude CLI exited with code {proc.returncode}: {detail[:300]}")
+        return stdout.decode()
+    finally:
+        record_call(perf_counter() - start)
+
+
+# Ask mode is read-only. Sandbox stays on, the workspace is trusted without a
+# prompt, and nothing here is --force / --yolo / --approve-mcps: a scoring
+# subprocess must not gain write, shell, or MCP approval.
+_CURSOR_SANDBOX_ARGS: tuple[str, ...] = (
+    "--print",
+    "--output-format",
+    "text",
+    "--mode",
+    "ask",
+    "--sandbox",
+    "enabled",
+    "--trust",
+)
+
+
+def _cursor_executable() -> str | None:
+    """`agent` on PATH, otherwise the older `cursor-agent` binary name."""
+    return shutil.which("agent") or shutil.which("cursor-agent")
+
+
+async def _call_cursor(prompt: str, model: str, cache_prefix: str | None = None) -> str:
+    """Call Cursor via the installed `agent` CLI, sandboxed.
+
+    Same contract as `_call_cli`: prompt over STDIN (never argv), neutral cwd,
+    and `model` ignored. Config models are Anthropic ids (`claude-sonnet-4-6`,
+    `claude-haiku-4-5-...`); the Cursor CLI rejects them, so the account's model
+    is used instead. `cache_prefix` is concatenated before the prompt — the CLI
+    has no cache_control.
+
+    `--workspace` is the same 0700 directory `_call_cli` uses, so the subprocess
+    does not inherit this repository's MCP servers and re-enter moonlighter.
+    """
+    full = f"{cache_prefix}\n\n{prompt}" if cache_prefix is not None else prompt
+    exe = _cursor_executable()
+    if exe is None:
+        raise RuntimeError(
+            "the `agent` CLI was not found on PATH (also looked for `cursor-agent`). "
+            "Install the Cursor CLI and run `agent login`."
+        )
+    workdir = str(_cli_workdir())
+    start = perf_counter()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            exe,
+            *_CURSOR_SANDBOX_ARGS,
+            "--workspace",
+            workdir,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workdir,
+        )
+        stdout, stderr = await proc.communicate(input=full.encode())
+        if proc.returncode != 0:
+            detail = stderr.decode().strip() or stdout.decode().strip()
+            raise RuntimeError(f"agent CLI exited with code {proc.returncode}: {detail[:300]}")
         return stdout.decode()
     finally:
         record_call(perf_counter() - start)
