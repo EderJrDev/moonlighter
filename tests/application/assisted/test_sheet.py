@@ -216,3 +216,31 @@ def test_multi_select_with_every_option_chosen_has_no_not_chosen_line():
         apply_url="http://x",
     )
     assert "not chosen" not in sheet
+
+
+def _numbered_options(count: int) -> tuple[str, ...]:
+    return tuple(f"Option {number}" for number in range(1, count + 1))
+
+
+def test_more_than_twenty_unchosen_options_are_summarised_not_listed():
+    # A Lever select with 3,301 countries made a ~108 KB sheet out of one question.
+    options = _numbered_options(22)
+    sheet = render_sheet([choice("Country?", options, "Option 1")], **HEADER)
+    entry = _entry_block(sheet, "[1/1]")
+    assert "  not chosen: 21 other options (see the form)" in entry.splitlines()
+    assert "Option 22" not in entry
+
+
+def test_twenty_unchosen_options_are_still_listed():
+    options = _numbered_options(21)
+    sheet = render_sheet([choice("Country?", options, "Option 1")], **HEADER)
+    entry = _entry_block(sheet, "[1/1]")
+    assert f"  not chosen: {' / '.join(options[1:])}" in entry.splitlines()
+
+
+def test_a_multi_select_with_more_than_twenty_unchosen_options_is_summarised():
+    options = _numbered_options(23)
+    sheet = render_sheet([multi_choice("Languages?", options, "Option 1\nOption 2")], **HEADER)
+    entry = _entry_block(sheet, "[1/1]")
+    assert "  not chosen: 21 other options (see the form)" in entry.splitlines()
+    assert "Option 23" not in entry
