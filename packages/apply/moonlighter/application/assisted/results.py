@@ -29,6 +29,7 @@ class SheetResult:
     cv_note: str | None = None
     cv_path: str | None = None
     cv_compiled: bool | None = None
+    source_note: str | None = None
     error: str | None = None
 
     def __post_init__(self) -> None:
@@ -47,7 +48,7 @@ def render_sheet_result(result: SheetResult) -> str:
         company=result.company,
         apply_url=result.apply_url,
     )
-    for note in (result.alias_note, result.cv_note):
+    for note in (result.alias_note, result.cv_note, result.source_note):
         if note is not None:
             sheet += f"\n\n{note}"
     return sheet
@@ -76,6 +77,6 @@ def sheet_result_to_dict(result: SheetResult) -> dict[str, Any]:
             }
             for item in result.composed
         ],
-        "notes": {"alias": result.alias_note, "cv": result.cv_note},
+        "notes": {"alias": result.alias_note, "cv": result.cv_note, "source": result.source_note},
         "error": result.error,
     }

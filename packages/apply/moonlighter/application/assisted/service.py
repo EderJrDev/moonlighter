@@ -1,6 +1,8 @@
 """Turn a job into a sheet the candidate can paste into the form."""
 
 import json
+import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +12,10 @@ from moonlighter.application.assisted.composer import ComposedAnswer, compose_an
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
 from moonlighter.application.assisted.results import SheetKind, SheetResult
 from moonlighter.application.assisted.sources import registry
-from moonlighter.application.assisted.sources.base import questions_or_empty
+from moonlighter.application.assisted.sources.base import (
+    questions_or_empty,
+    required_fields_or_empty,
+)
 from moonlighter.application.assisted.sources.pasted import extract_questions_from_page
 from moonlighter.application.cvgen.service import ensure_tailored_cv, resolved_pool_path
 from moonlighter.core.config import DEFAULTS
@@ -27,18 +32,53 @@ PASTE_HINT = (
     "Open {url}, select the whole page (Cmd+A), copy it (Cmd+C), and call\n"
     'prepare_application_from_paste({job_id}, "<the copied text>").'
 )
+PASTE_REQUIRED_LINE = "This form requires: {fields}."
+SOURCE_NOTE_PASTE_IGNORED = (
+    "The pasted text was not used: this job's ATS publishes its form, which is more reliable."
+)
+
+# Keywords that tie a required-field label (from a source's required_fields)
+# to a question read from a paste, matched as whole words, EN and PT-BR.
+_REQUIRED_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "LinkedIn": ("linkedin",),
+    "Salary expectation": ("salary", "salário", "salario", "pretensão", "pretensao"),
+    "CV": ("cv", "currículo", "curriculo", "curriculum", "resume"),
+    "Location": ("location", "localização", "localizacao", "cidade"),
+}
 
 
 def _job(job_id: int) -> Job | None:
     return Job.get_or_none(Job.id == job_id)
 
 
-async def _questions_from_api(job: Job) -> list[FormQuestion]:
+async def _api_form(job: Job) -> tuple[list[FormQuestion], tuple[str, ...]]:
+    """The form from the job's ATS, or — when it has none — the fields it requires."""
     match = registry.find_match(job)
     if match is None:
-        return []
+        return [], ()
     async with httpx.AsyncClient(timeout=20) as client:
-        return await questions_or_empty(match, client)
+        questions = await questions_or_empty(match, client)
+        if questions:
+            return questions, ()
+        return [], await required_fields_or_empty(match, client)
+
+
+def _mark_required(
+    questions: list[FormQuestion], required_labels: tuple[str, ...]
+) -> list[FormQuestion]:
+    keywords = [
+        keyword
+        for label in required_labels
+        for keyword in _REQUIRED_KEYWORDS.get(label, (label.lower(),))
+    ]
+    patterns = [re.compile(rf"\b{re.escape(keyword)}\b") for keyword in keywords]
+    return [
+        replace(question, required=True)
+        if not question.required
+        and any(pattern.search(question.label.lower()) for pattern in patterns)
+        else question
+        for question in questions
+    ]
 
 
 def _tracking_alias(job: Job, config: dict[str, Any]) -> str | None:
@@ -93,7 +133,12 @@ def _names_path(composed: list[ComposedAnswer], path: Path) -> bool:
 
 
 async def _sheet(
-    job: Job, questions: list[FormQuestion], config: dict[str, Any], profile: dict[str, Any]
+    job: Job,
+    questions: list[FormQuestion],
+    config: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    source_note: str | None = None,
 ) -> SheetResult:
     application, _ = Application.get_or_create(job=job, defaults={"status": "draft"})
     job_cache: dict[str, Any] = application.get_form_data()
@@ -167,6 +212,7 @@ async def _sheet(
         cv_note=cv_note,
         cv_path=str(tailored.path) if tailored is not None else None,
         cv_compiled=tailored.compiled if tailored is not None else None,
+        source_note=source_note,
     )
 
 
@@ -207,13 +253,12 @@ async def prepare_application(
         return failed_sheet(SheetKind.JOB_NOT_FOUND, f"Job {job_id} not found.")
     if (offer := _cv_bootstrap_offer(config)) is not None:
         return offer
-    questions = await _questions_from_api(job)
+    questions, required_labels = await _api_form(job)
     if not questions:
-        return failed_sheet(
-            SheetKind.NEEDS_PASTE,
-            PASTE_HINT.format(url=job.url, job_id=job_id),
-            apply_url=job.url,
-        )
+        hint = PASTE_HINT.format(url=job.url, job_id=job_id)
+        if required_labels:
+            hint += "\n" + PASTE_REQUIRED_LINE.format(fields=", ".join(required_labels))
+        return failed_sheet(SheetKind.NEEDS_PASTE, hint, apply_url=job.url)
     return await _sheet(job, questions, config, profile)
 
 
@@ -225,10 +270,17 @@ async def prepare_application_from_paste(
         return failed_sheet(SheetKind.JOB_NOT_FOUND, f"Job {job_id} not found.")
     if (offer := _cv_bootstrap_offer(config)) is not None:
         return offer
+    api_questions, required_labels = await _api_form(job)
+    if api_questions:
+        return await _sheet(
+            job, api_questions, config, profile, source_note=SOURCE_NOTE_PASTE_IGNORED
+        )
     questions = await extract_questions_from_page(page_text, make_caller(config))
     if not questions:
         return failed_sheet(
             SheetKind.NO_QUESTIONS,
             "No questions could be found in that text. Was the whole page copied?",
         )
+    if required_labels:
+        questions = _mark_required(questions, required_labels)
     return await _sheet(job, questions, config, profile)
