@@ -87,7 +87,7 @@ async def test_scan_no_new_jobs(temporary_database):
             instance.scan = AsyncMock(return_value=[])
             scanner_mock.return_value = instance
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
     assert "No new jobs found" in result
 
 
@@ -114,7 +114,7 @@ async def test_scan_and_evaluate_reports_archived_stale_jobs(temporary_database)
             instance.scan = AsyncMock(return_value=[])
             scanner_mock.return_value = instance
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
 
     assert "archived" in result.lower()
     job = Job.get(Job.url == "https://boards.greenhouse.io/stale-co/jobs/1")
@@ -138,7 +138,7 @@ async def test_scan_and_evaluate_no_new_jobs_still_runs_archive_check(temporary_
             instance.scan = AsyncMock(return_value=[])
             scanner_mock.return_value = instance
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
 
     assert "No new jobs found" in result
     assert "No closed jobs found." in result
@@ -173,7 +173,7 @@ async def test_scan_all_below_threshold(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
     assert "threshold" in result.lower()
     # Job should be archived because score=4.0 is below the default threshold=6.5
     job = Job.get(Job.url == "https://x.com/1")
@@ -210,7 +210,7 @@ async def test_scan_above_threshold_shows_table(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
     assert "Stripe" in result
     assert "Sr Eng" in result
 
@@ -236,7 +236,7 @@ async def test_scan_dedup_against_scan_log(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
     # evaluate_jobs_batch is genuinely not called: the scanner returned the job but
     # dedup (a pre-existing ScanLog) filtered it before it reached _evaluate_and_store.
     mock_batch.assert_not_called()
@@ -272,7 +272,7 @@ async def test_scan_linkedin_failure_doesnt_block(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("LinkedIn not available"))
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
     # LinkedIn failure doesn't block the HTTP results; job with score=8.0 above the threshold.
     assert "co" in result or "Eng" in result or "jobs" in result.lower()
 
@@ -316,7 +316,7 @@ async def test_scan_saves_salary_fields(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
     job = Job.get(Job.url == "https://x.com/5")
     assert job.salary_min == 180000
     assert job.salary_currency == "USD"
@@ -355,7 +355,7 @@ async def test_scan_saves_caveats_as_json(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
     job = Job.get(Job.url == "https://x.com/6")
     caveats = json.loads(job.caveats)
     assert "US only" in caveats
@@ -391,7 +391,7 @@ async def test_scan_status_archived_if_below_threshold(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
     # score=3.0 injetado via evaluate_jobs_batch → status genuinamente "archived"
     job = Job.get(Job.url == "https://x.com/7")
     assert job.status == "archived"
@@ -408,7 +408,7 @@ async def test_scan_company_tool_delegates_to_service(temporary_database):
     with patch(
         "moonlighter.discovery.service.scan_company", new=AsyncMock(return_value=fake_report)
     ) as mock_scan_company:
-        result = await scan_company("greenhouse", "stripe", ctx=make_test_context())
+        result = await scan_company("greenhouse", "stripe", context=make_test_context())
     assert result == "report"
     mock_scan_company.assert_awaited_once()
     call_arguments = mock_scan_company.await_args.args
@@ -424,7 +424,7 @@ async def test_list_jobs_default_new(temporary_database):
     create_job(temporary_database, url="https://x.com/lj1", status="new", score=8.0)
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="new", ctx=make_test_context())
+    result = await list_jobs(status="new", context=make_test_context())
     assert "Stripe" in result
 
 
@@ -451,7 +451,7 @@ async def test_list_jobs_reorders_and_badges_recently_rejected_companies(tempora
     create_job(temporary_database, company="Holepunch", url="https://x.com/lj/new", score=8.0)
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(ctx=make_test_context())
+    result = await list_jobs(context=make_test_context())
     assert "rejected 1x" in result
     assert result.index("CleanCo") < result.index("Holepunch")
 
@@ -466,7 +466,7 @@ async def test_list_jobs_filtered_by_status(temporary_database):
     )
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="reviewed", ctx=make_test_context())
+    result = await list_jobs(status="reviewed", context=make_test_context())
     assert "Linear" in result
     assert "Vercel" not in result
 
@@ -483,7 +483,7 @@ async def test_list_jobs_limit(temporary_database):
         )
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="new", limit=3, ctx=make_test_context())
+    result = await list_jobs(status="new", limit=3, context=make_test_context())
     # Verify it returned without error
     assert result is not None
     assert len(result) > 0
@@ -493,7 +493,7 @@ async def test_list_jobs_empty(temporary_database):
     init_db()
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="offer", ctx=make_test_context())
+    result = await list_jobs(status="offer", context=make_test_context())
     assert "No jobs" in result
 
 
@@ -507,7 +507,7 @@ async def test_list_jobs_ordered_by_score_desc(temporary_database):
     )
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="new", ctx=make_test_context())
+    result = await list_jobs(status="new", context=make_test_context())
     # HighScore should appear before LowScore in the output
     assert result.index("HighScore") < result.index("LowScore")
 
@@ -520,7 +520,7 @@ async def test_get_job_existing(temporary_database):
     job = create_job(temporary_database, url="https://x.com/gj1")
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     assert "Stripe" in result
     assert "Engineer" in result
     assert str(job.id) in result or "8.0" in result
@@ -530,7 +530,7 @@ async def test_get_job_nonexistent(temporary_database):
     init_db()
     from moonlighter.server import get_job
 
-    result = await get_job(id=99999, ctx=make_test_context())
+    result = await get_job(id=99999, context=make_test_context())
     assert "not found" in result
 
 
@@ -539,7 +539,7 @@ async def test_get_job_with_caveats(temporary_database):
     job = create_job(temporary_database, url="https://x.com/gj2", caveats='["US only"]')
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     assert "US only" in result
 
 
@@ -555,7 +555,7 @@ async def test_get_job_with_salary(temporary_database):
     )
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     assert "150" in result or "200" in result
 
 
@@ -564,7 +564,7 @@ async def test_get_job_without_salary(temporary_database):
     job = create_job(temporary_database, url="https://x.com/gj4")
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     # Should not crash; salary line absent
     assert "not found" not in result
 
@@ -574,7 +574,7 @@ async def test_get_job_without_posted_at(temporary_database):
     job = create_job(temporary_database, url="https://x.com/gj5", posted_at=None)
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     assert "n/a" in result
 
 
@@ -588,7 +588,7 @@ async def test_get_job_description_is_framed_as_external_data(temporary_database
     )
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     import re
 
     assert re.search(r"<job_description_[0-9a-f]{8}>", result)
@@ -616,7 +616,7 @@ async def test_prepare_application_tool_delegates_to_assisted_service(monkeypatc
         )
 
     monkeypatch.setattr(server.assisted_service, "prepare_application", fake_prepare)
-    result = await server.prepare_application(42, ctx=make_test_context())
+    result = await server.prepare_application(42, context=make_test_context())
     assert result == "sheet"
     assert called["args"][0] == 42
 
@@ -641,7 +641,7 @@ async def test_prepare_application_from_paste_tool_delegates_to_assisted_service
         server.assisted_service, "prepare_application_from_paste", fake_prepare_from_paste
     )
     result = await server.prepare_application_from_paste(
-        42, "copied page text", ctx=make_test_context()
+        42, "copied page text", context=make_test_context()
     )
     assert result == "sheet from paste"
     assert called["args"] == (42, "copied page text")
@@ -680,7 +680,7 @@ async def test_get_pipeline_empty(temporary_database):
     init_db()
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "0" in result or "Total" in result
 
 
@@ -692,7 +692,7 @@ async def test_get_pipeline_groups_by_status(temporary_database):
     create_application(job2, status="interviews")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "Submitted" in result or "submitted" in result.lower()
     assert "Interview" in result or "interview" in result.lower()
 
@@ -703,7 +703,7 @@ async def test_get_pipeline_shows_next_action(temporary_database):
     create_application(job, status="submitted", next_action="follow up em 2026-06-01")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "follow up" in result
 
 
@@ -713,7 +713,7 @@ async def test_get_pipeline_skips_empty_statuses(temporary_database):
     create_application(job, status="submitted")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     # "Offer" section should not appear since no offer apps
     assert "## Offer" not in result
 
@@ -724,7 +724,7 @@ async def test_get_pipeline_shows_warnings_when_setup_incomplete(temporary_datab
     init_db()
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context(profile={}))
+    result = await get_pipeline(context=make_test_context(profile={}))
     assert "# Setup Warnings" in result
     assert "[WARN]" in result or "[ERROR]" in result
     assert result.index("# Setup Warnings") < result.index("# Application Pipeline")
@@ -751,7 +751,7 @@ async def test_get_pipeline_no_warnings_section_when_setup_is_clean(temporary_da
         patch("moonlighter.startup.moonlighter_home", return_value=tmp_path),
         patch("moonlighter.startup.shutil.which", return_value="/usr/local/bin/claude"),
     ):
-        result = await get_pipeline(ctx=make_test_context(config=config, profile=profile))
+        result = await get_pipeline(context=make_test_context(config=config, profile=profile))
     assert "# Setup Warnings" not in result
     assert result.startswith("# Application Pipeline")
 
@@ -772,7 +772,9 @@ async def test_get_pipeline_warnings_distinguish_error_and_warn_levels(
 
         _os.environ.pop("ANTHROPIC_API_KEY", None)
         config = {"llm_backend": "api"}
-        result = await get_pipeline(ctx=make_test_context(config=config, profile={"skills": []}))
+        result = await get_pipeline(
+            context=make_test_context(config=config, profile={"skills": []})
+        )
     assert "[ERROR]" in result
     assert "[WARN]" in result
 
@@ -786,7 +788,7 @@ async def test_update_status_success(temporary_database):
     create_application(job)
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=job.id, status="screening", ctx=make_test_context())
+    result = await update_status(job_id=job.id, status="screening", context=make_test_context())
     app = Application.get(Application.job == job)
     assert app.status == "screening"
     assert "screening" in result
@@ -806,7 +808,7 @@ async def test_update_status_documents_exactly_the_accepted_statuses(temporary_d
         line for line in (update_status.__doc__ or "").splitlines() if "status:" in line
     )
     documented = set(re.findall(r"'([a-z_]+)'", docstring_line))
-    rejection = await update_status(job_id=job.id, status="?", ctx=make_test_context())
+    rejection = await update_status(job_id=job.id, status="?", context=make_test_context())
     accepted = set(rejection.split("Accepted values: ")[1].split(", "))
     assert documented == accepted
 
@@ -819,10 +821,10 @@ async def test_update_status_syncs_job_status(temporary_database):
     create_application(job)
     from moonlighter.server import update_status
 
-    await update_status(job_id=job.id, status="submitted", ctx=make_test_context())
+    await update_status(job_id=job.id, status="submitted", context=make_test_context())
     assert Job.get_by_id(job.id).status == "applied"
 
-    await update_status(job_id=job.id, status="rejected", ctx=make_test_context())
+    await update_status(job_id=job.id, status="rejected", context=make_test_context())
     assert Job.get_by_id(job.id).status == "rejected"
 
 
@@ -836,7 +838,7 @@ async def test_update_status_with_notes(temporary_database):
         job_id=job.id,
         status="interviews",
         notes="Scheduled for Monday",
-        ctx=make_test_context(),
+        context=make_test_context(),
     )
     app = Application.get(Application.job == job)
     assert "Scheduled for Monday" in app.notes
@@ -849,7 +851,7 @@ async def test_update_status_with_next_action(temporary_database):
     from moonlighter.server import update_status
 
     result = await update_status(
-        job_id=job.id, status="screening", next_action="Call Friday", ctx=make_test_context()
+        job_id=job.id, status="screening", next_action="Call Friday", context=make_test_context()
     )
     app = Application.get(Application.job == job)
     assert app.next_action == "Call Friday"
@@ -860,7 +862,7 @@ async def test_update_status_invalid(temporary_database):
     init_db()
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=1, status="banana", ctx=make_test_context())
+    result = await update_status(job_id=1, status="banana", context=make_test_context())
     assert "Invalid" in result or "Status" in result
 
 
@@ -868,7 +870,7 @@ async def test_update_status_job_not_found(temporary_database):
     init_db()
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=77777, status="screening", ctx=make_test_context())
+    result = await update_status(job_id=77777, status="screening", context=make_test_context())
     assert "not found" in result
 
 
@@ -878,7 +880,7 @@ async def test_update_status_no_application(temporary_database):
     # No application
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=job.id, status="screening", ctx=make_test_context())
+    result = await update_status(job_id=job.id, status="screening", context=make_test_context())
     assert "application" in result or "not found" in result
 
 
@@ -890,7 +892,7 @@ async def test_update_status_invalid_leaves_db_untouched(temporary_database):
     from moonlighter.server import update_status
 
     result = await update_status(
-        job_id=job.id, status="banana", notes="should not stick", ctx=make_test_context()
+        job_id=job.id, status="banana", notes="should not stick", context=make_test_context()
     )
     app = Application.get(Application.job == job)
     assert app.status == "draft"
@@ -909,7 +911,7 @@ async def test_update_status_accepts_every_valid_status(temporary_database, stat
     create_application(job)
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=job.id, status=status, ctx=make_test_context())
+    result = await update_status(job_id=job.id, status=status, context=make_test_context())
     app = Application.get(Application.job == job)
     assert app.status == status
     assert status in result
@@ -934,7 +936,7 @@ async def test_update_status_submitted_promotes_bank_eligible_answers(temporary_
         ),
     )
 
-    await update_status(job_id=job.id, status="submitted", ctx=make_test_context())
+    await update_status(job_id=job.id, status="submitted", context=make_test_context())
 
     entry = AnswerBankEntry.get(
         AnswerBankEntry.normalized_question == "do you have 5+ years of python experience"
@@ -958,7 +960,7 @@ async def test_update_status_non_submitted_does_not_promote(temporary_database):
         form_data=json.dumps({"Do you know Kubernetes?": {"answer": "Yes", "kind": "boolean"}}),
     )
 
-    await update_status(job_id=job.id, status="screening", ctx=make_test_context())
+    await update_status(job_id=job.id, status="screening", context=make_test_context())
 
     assert AnswerBankEntry.select().count() == 0
 
@@ -978,7 +980,7 @@ async def test_update_status_submitted_with_legacy_flat_form_data_does_not_crash
     job = create_job(temporary_database, url="https://x.com/promote3")
     create_application(job)  # default form_data='{"Q": "A"}'
 
-    result = await update_status(job_id=job.id, status="submitted", ctx=make_test_context())
+    result = await update_status(job_id=job.id, status="submitted", context=make_test_context())
 
     assert "submitted" in result
     assert AnswerBankEntry.select().count() == 0
@@ -989,7 +991,7 @@ async def test_update_status_invalid_lists_accepted_values_sorted(temporary_data
     init_db()
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=1, status="not-a-real-status", ctx=make_test_context())
+    result = await update_status(job_id=1, status="not-a-real-status", context=make_test_context())
     expected_order = ", ".join(
         sorted({"screening", "interviews", "offer", "rejected", "submitted", "draft"})
     )
@@ -1004,10 +1006,10 @@ async def test_update_status_appends_multiple_notes_instead_of_overwriting(tempo
     from moonlighter.server import update_status
 
     await update_status(
-        job_id=job.id, status="screening", notes="First note", ctx=make_test_context()
+        job_id=job.id, status="screening", notes="First note", context=make_test_context()
     )
     await update_status(
-        job_id=job.id, status="interviews", notes="Second note", ctx=make_test_context()
+        job_id=job.id, status="interviews", notes="Second note", context=make_test_context()
     )
     app = Application.get(Application.job == job)
     assert "First note" in app.notes
@@ -1023,8 +1025,10 @@ async def test_update_status_without_notes_preserves_existing_notes(temporary_da
     create_application(job)
     from moonlighter.server import update_status
 
-    await update_status(job_id=job.id, status="screening", notes="Keep me", ctx=make_test_context())
-    await update_status(job_id=job.id, status="interviews", ctx=make_test_context())
+    await update_status(
+        job_id=job.id, status="screening", notes="Keep me", context=make_test_context()
+    )
+    await update_status(job_id=job.id, status="interviews", context=make_test_context())
     app = Application.get(Application.job == job)
     assert "Keep me" in app.notes
 
@@ -1036,7 +1040,7 @@ async def test_update_status_without_next_action_preserves_existing_value(tempor
     create_application(job, next_action="original follow-up")
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=job.id, status="screening", ctx=make_test_context())
+    result = await update_status(job_id=job.id, status="screening", context=make_test_context())
     app = Application.get(Application.job == job)
     assert app.next_action == "original follow-up"
     assert "Next action" not in result
@@ -1049,7 +1053,7 @@ async def test_update_status_job_not_found_does_not_leak_other_jobs(temporary_da
     create_application(job, status="draft")
     from moonlighter.server import update_status
 
-    result = await update_status(job_id=999999, status="offer", ctx=make_test_context())
+    result = await update_status(job_id=999999, status="offer", context=make_test_context())
     assert "not found" in result
     app = Application.get(Application.job == job)
     assert app.status == "draft"  # untouched
@@ -1063,7 +1067,7 @@ async def test_update_status_updates_updated_at_timestamp(temporary_database):
     original_updated_at = app.updated_at
     from moonlighter.server import update_status
 
-    await update_status(job_id=job.id, status="screening", ctx=make_test_context())
+    await update_status(job_id=job.id, status="screening", context=make_test_context())
     refreshed = Application.get(Application.job == job)
     assert refreshed.updated_at >= original_updated_at
 
@@ -1102,7 +1106,7 @@ async def test_scan_concurrent_batch_all_processed(temporary_database):
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
     # chunking assertion: 15 jobs / batch_size=5 → exactly 3 calls to evaluate_jobs_batch
     assert mock_batch.call_count == 3, (
         f"expected 3 chunks, but evaluate_jobs_batch was called {mock_batch.call_count}x "
@@ -1155,7 +1159,7 @@ async def test_scan_spend_limit_midbatch_leaves_no_orphan_claims(temporary_datab
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
         await scan_and_evaluate(
-            ctx=make_test_context(
+            context=make_test_context(
                 config={
                     "score_threshold": 6.5,
                     "llm_model": "claude-haiku-4-5-20251001",
@@ -1213,7 +1217,7 @@ async def test_scan_spend_limit_stops_further_batches(temporary_database):
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
         await scan_and_evaluate(
-            ctx=make_test_context(
+            context=make_test_context(
                 config={
                     "score_threshold": 6.5,
                     "llm_model": "claude-haiku-4-5-20251001",
@@ -1276,7 +1280,7 @@ async def test_scan_non_spend_error_keeps_title_filtered_in_report(temporary_dat
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
         result = await scan_and_evaluate(
-            ctx=make_test_context(
+            context=make_test_context(
                 config={
                     "score_threshold": 6.5,
                     "llm_model": "claude-haiku-4-5-20251001",
@@ -1331,7 +1335,7 @@ async def test_scan_chunk_crash_outside_try_except_does_not_break_whole_scan(tem
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
         result = await scan_and_evaluate(
-            ctx=make_test_context(
+            context=make_test_context(
                 config={
                     "score_threshold": 6.5,
                     "llm_model": "claude-haiku-4-5-20251001",
@@ -1352,7 +1356,7 @@ async def test_get_pipeline_shows_needs_review(temporary_database):
     create_application(job, status="needs_review")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "needs_review" in result.lower()
 
 
@@ -1365,7 +1369,7 @@ async def test_get_job_score_null(temporary_database):
     job = create_job(temporary_database, url="https://x.com/gj-null-score", score=None)
     from moonlighter.server import get_job
 
-    result = await get_job(id=job.id, ctx=make_test_context())
+    result = await get_job(id=job.id, context=make_test_context())
     assert "—" in result
     assert "not found" not in result
 
@@ -1387,7 +1391,7 @@ async def test_list_jobs_salary_estimate_shows_asterisk(temporary_database):
     )
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="new", ctx=make_test_context())
+    result = await list_jobs(status="new", context=make_test_context())
     assert " *" in result
 
 
@@ -1405,7 +1409,7 @@ async def test_list_jobs_salary_min_only_shows_plus(temporary_database):
     )
     from moonlighter.server import list_jobs
 
-    result = await list_jobs(status="new", ctx=make_test_context())
+    result = await list_jobs(status="new", context=make_test_context())
     assert "k+" in result or "120" in result
 
 
@@ -1423,7 +1427,7 @@ async def test_get_pipeline_total_count(temporary_database):
     create_application(job3, status="rejected")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "3" in result
 
 
@@ -1446,7 +1450,7 @@ async def test_get_pipeline_every_status_bucket_appears(temporary_database):
         create_application(job, status=status)
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     headers = [f"## {status.capitalize()} (1)" for status in statuses]
     positions = [result.index(header) for header in headers]
     # Headers appear in the declared status order, not e.g. insertion order.
@@ -1471,7 +1475,7 @@ async def test_get_pipeline_multiple_applications_same_status_ordered_by_updated
     app_new.save()
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert result.index("NewCo") < result.index("OldCo")
 
 
@@ -1482,7 +1486,7 @@ async def test_get_pipeline_no_applied_at_shows_dash(temporary_database):
     create_application(job, status="draft", applied_at=None)
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "(—)" in result
 
 
@@ -1495,7 +1499,7 @@ async def test_get_pipeline_shows_job_company_and_title(temporary_database):
     create_application(job, status="submitted")
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert f"#{job.id} Acme Corp/Backend Dev" in result
 
 
@@ -1504,7 +1508,7 @@ async def test_get_pipeline_empty_has_zero_total_and_no_bucket_headers(temporary
     init_db()
     from moonlighter.server import get_pipeline
 
-    result = await get_pipeline(ctx=make_test_context())
+    result = await get_pipeline(context=make_test_context())
     assert "## " not in result
     assert "**Total applications:** 0" in result
 
@@ -1567,7 +1571,7 @@ async def test_scan_registered_scanner_session_expired_shows_warning(temporary_d
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(return_value=make_mock_page())
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
 
     assert "⚠️  _FakeSessionExpiredSource: Session expired." in result
     assert "expired" in result or "login" in result.lower()
@@ -1612,7 +1616,7 @@ async def test_scan_registered_scanner_session_expired_does_not_block_http_resul
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(return_value=make_mock_page())
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
 
     assert "Stripe" in result  # HTTP job appears
     assert "_FakeSessionExpiredSource" in result  # warning appears too
@@ -1639,7 +1643,7 @@ async def test_setup_email_calls_gmail_flow():
     ):
         mock_oauth.return_value = None
         mock_setup.return_value = MagicMock()
-        result = await setup_email(ctx=make_test_context(config=test_config))
+        result = await setup_email(context=make_test_context(config=test_config))
 
     assert "success" in result.lower() or "configured" in result.lower()
 
@@ -1655,7 +1659,7 @@ async def test_setup_email_raises_friendly_error_when_client_json_missing():
             "token_path": "~/.moonlighter/gmail-token.json",
         }
     }
-    result = await setup_email(ctx=make_test_context(config=test_config))
+    result = await setup_email(context=make_test_context(config=test_config))
 
     assert "client" in result.lower() or "credential" in result.lower() or "error" in result.lower()
 
@@ -1679,7 +1683,7 @@ async def test_setup_email_resolves_a_relative_credentials_path_under_moonlighte
     ):
         mock_oauth.return_value = None
         mock_setup.return_value = MagicMock()
-        result = await setup_email(ctx=make_test_context(config=test_config))
+        result = await setup_email(context=make_test_context(config=test_config))
 
     assert "success" in result.lower() or "configured" in result.lower()
     called_creds_path, called_token_path = mock_oauth.call_args.args[:2]
@@ -1705,7 +1709,7 @@ async def test_setup_email_leaves_an_absolute_credentials_path_untouched(tmp_pat
     ):
         mock_oauth.return_value = None
         mock_setup.return_value = MagicMock()
-        result = await setup_email(ctx=make_test_context(config=test_config))
+        result = await setup_email(context=make_test_context(config=test_config))
 
     assert "success" in result.lower() or "configured" in result.lower()
     called_creds_path = mock_oauth.call_args.args[0]
@@ -1719,7 +1723,7 @@ async def test_setup_email_missing_credentials_path_gives_a_clear_message():
     from moonlighter.server import setup_email
 
     test_config = {"email": {"token_path": "gmail-token.json"}}
-    result = await setup_email(ctx=make_test_context(config=test_config))
+    result = await setup_email(context=make_test_context(config=test_config))
     assert "credentials_path" in result
     assert "not configured" in result.lower()
 
@@ -1760,7 +1764,7 @@ async def test_sync_email_responses_returns_summary(temporary_database):
     }
 
     with patch("moonlighter.server.sync_responses", new=AsyncMock(return_value=fake_updates)):
-        result = await sync_email_responses(ctx=make_test_context(config=test_config))
+        result = await sync_email_responses(context=make_test_context(config=test_config))
 
     assert "Anthropic" in result
     assert "Stripe" in result
@@ -1784,7 +1788,7 @@ async def test_sync_email_responses_empty_inbox(temporary_database):
     }
 
     with patch("moonlighter.server.sync_responses", new=AsyncMock(return_value=[])):
-        result = await sync_email_responses(ctx=make_test_context(config=test_config))
+        result = await sync_email_responses(context=make_test_context(config=test_config))
 
     assert "no new" in result.lower() or "0" in result
 
@@ -1812,7 +1816,7 @@ async def test_sync_email_responses_flags_fuzzy_match_as_suggestion(temporary_da
             ]
         ),
     ):
-        result = await sync_email_responses(ctx=make_test_context())
+        result = await sync_email_responses(context=make_test_context())
 
     assert "update_status" in result
     assert "42" in result
@@ -1903,7 +1907,7 @@ async def test_scan_concurrent_calls_evaluate_same_url_only_once(temporary_datab
 
     with _scan_patches([raw], eval_mock):
         # Fire 5 concurrent scans for the same job
-        await asyncio.gather(*[scan_and_evaluate(ctx=make_test_context()) for _ in range(5)])
+        await asyncio.gather(*[scan_and_evaluate(context=make_test_context()) for _ in range(5)])
 
     # LLM must have been called exactly once despite 5 concurrent scans
     assert eval_mock.call_count == 1
@@ -1934,7 +1938,7 @@ async def test_scan_spend_limit_releases_scan_log_claim(temporary_database):
     failing_eval = AsyncMock(side_effect=spend_limit_error)
 
     with _scan_patches([raw], failing_eval):
-        result = await scan_and_evaluate(ctx=make_test_context())
+        result = await scan_and_evaluate(context=make_test_context())
 
     # Does not raise — reports the limit in the return text.
     assert "spend limit" in result.lower() or "interrompido" in result.lower()
@@ -1955,7 +1959,7 @@ async def test_scan_already_in_scan_log_skips_llm(temporary_database):
     eval_mock = AsyncMock(return_value=make_eval_result(score=8.0))
 
     with _scan_patches([raw], eval_mock):
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
 
     eval_mock.assert_not_called()
 
@@ -1977,7 +1981,7 @@ async def test_add_job_tool_delegates_to_service(temporary_database):
             company="Stripe",
             title="Eng",
             description="A detailed job description that goes on.",
-            ctx=make_test_context(),
+            context=make_test_context(),
         )
     assert "Stripe" in result or "NEW" in result
 
@@ -2002,7 +2006,7 @@ async def test_verify_job_tool_delegates_to_service(temporary_database):
         result = await verify_job(
             job_id=job.id,
             page_text="Full page text with the real job description.",
-            ctx=make_test_context(),
+            context=make_test_context(),
         )
     assert "Alice" in result or "NEW" in result
 
@@ -2023,7 +2027,7 @@ async def test_tool_archive_stale_jobs_delegates_and_formats(temporary_database)
         "moonlighter.server.scan_service.archive_stale_jobs",
         new=AsyncMock(return_value=fake_result),
     ):
-        result = await archive_stale_jobs(ctx=make_test_context())
+        result = await archive_stale_jobs(context=make_test_context())
 
     assert "acme" in result
     assert "beta" in result
@@ -2036,7 +2040,7 @@ async def test_tool_archive_stale_jobs_passes_filters(temporary_database):
 
     mock_service = AsyncMock(return_value=ArchiveResult())
     with patch("moonlighter.server.scan_service.archive_stale_jobs", new=mock_service):
-        await archive_stale_jobs(job_id=123, company=None, ctx=make_test_context())
+        await archive_stale_jobs(job_id=123, company=None, context=make_test_context())
 
     mock_service.assert_awaited_once()
     call_arguments = mock_service.await_args.args
@@ -2053,7 +2057,7 @@ async def test_tool_archive_stale_jobs_rejects_both_filters(temporary_database):
         "moonlighter.server.scan_service.archive_stale_jobs",
         new=AsyncMock(side_effect=ArchiveStaleJobsError("Provide job_id OR company, not both.")),
     ):
-        result = await archive_stale_jobs(job_id=1, company="acme", ctx=make_test_context())
+        result = await archive_stale_jobs(job_id=1, company="acme", context=make_test_context())
 
     assert "OR company" in result
 
@@ -2069,7 +2073,7 @@ async def test_setup_email_handles_auth_error(tmp_path):
         "email": {"credentials_path": str(creds), "token_path": str(tmp_path / "t.json")}
     }
     with patch("moonlighter.server.run_gmail_oauth", side_effect=GmailAuthError("invalid token")):
-        result = await setup_email(ctx=make_test_context(config=test_config))
+        result = await setup_email(context=make_test_context(config=test_config))
     assert "Gmail" in result and "invalid token" in result
 
 
@@ -2083,7 +2087,7 @@ async def test_setup_email_handles_unexpected_error(tmp_path):
         "email": {"credentials_path": str(creds), "token_path": str(tmp_path / "t.json")}
     }
     with patch("moonlighter.server.run_gmail_oauth", side_effect=RuntimeError("boom")):
-        result = await setup_email(ctx=make_test_context(config=test_config))
+        result = await setup_email(context=make_test_context(config=test_config))
     assert "unexpected" in result.lower()
 
 
@@ -2134,7 +2138,7 @@ async def test_scan_and_evaluate_logs_one_metrics_summary(temporary_database, ca
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
 
     summary_lines = [
         record for record in caplog.records if "op=scan_and_evaluate" in record.getMessage()
@@ -2185,7 +2189,7 @@ async def test_scan_and_evaluate_spend_limit_abort_increments_hits(temporary_dat
         MockLV.return_value.scan = AsyncMock(return_value=[])
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(side_effect=Exception("no browser"))
-        await scan_and_evaluate(ctx=make_test_context())
+        await scan_and_evaluate(context=make_test_context())
 
     summary_lines = [
         record for record in caplog.records if "op=scan_and_evaluate" in record.getMessage()
@@ -2225,7 +2229,7 @@ async def test_sync_email_responses_promotes_the_answers_of_an_application_an_em
     ]
 
     with patch("moonlighter.server.sync_responses", new=AsyncMock(return_value=fake_updates)):
-        await sync_email_responses(ctx=make_test_context(config={"email": {}}))
+        await sync_email_responses(context=make_test_context(config={"email": {}}))
 
     row = AnswerBankEntry.get(
         AnswerBankEntry.normalized_question == "are you authorized to work in brazil"
@@ -2275,7 +2279,7 @@ async def test_sync_email_responses_does_not_promote_when_the_status_did_not_adv
     ]
 
     with patch("moonlighter.server.sync_responses", new=AsyncMock(return_value=fake_updates)):
-        await sync_email_responses(ctx=make_test_context(config={"email": {}}))
+        await sync_email_responses(context=make_test_context(config={"email": {}}))
 
     assert AnswerBankEntry.select().count() == 0
 
@@ -2291,7 +2295,9 @@ async def test_list_answer_bank_shows_what_would_be_replayed(temporary_database)
     AnswerBankEntry.create(
         normalized_question="notice period", kind="text", answer="30 days", source_job_id=7
     )
-    result = await list_answer_bank(ctx=make_test_context(config={"answer_bank_max_age_days": 90}))
+    result = await list_answer_bank(
+        context=make_test_context(config={"answer_bank_max_age_days": 90})
+    )
     assert "notice period" in result
     assert "30 days" in result
 
@@ -2300,7 +2306,7 @@ async def test_list_answer_bank_empty(temporary_database):
     init_db()
     from moonlighter.server import list_answer_bank
 
-    result = await list_answer_bank(ctx=make_test_context(config={}))
+    result = await list_answer_bank(context=make_test_context(config={}))
     assert result == "The answer bank is empty."
 
 
@@ -2312,7 +2318,7 @@ async def test_forget_answer_removes_the_entry_and_says_so(temporary_database):
     AnswerBankEntry.create(
         normalized_question="notice period", kind="text", answer="30 days", source_job_id=7
     )
-    result = await forget_answer("Notice period?", ctx=make_test_context(config={}))
+    result = await forget_answer("Notice period?", context=make_test_context(config={}))
     assert "notice period" in result
     assert AnswerBankEntry.select().count() == 0
 
@@ -2321,7 +2327,7 @@ async def test_forget_answer_reports_no_match(temporary_database):
     init_db()
     from moonlighter.server import forget_answer
 
-    result = await forget_answer("nothing here", ctx=make_test_context(config={}))
+    result = await forget_answer("nothing here", context=make_test_context(config={}))
     assert "No banked answer" in result
 
 
@@ -2383,7 +2389,7 @@ async def test_bootstrap_cv_pool_tool_reports_what_it_generated(monkeypatch, tmp
         return outcome
 
     monkeypatch.setattr(server, "bootstrap_cv_pool_service", _fake_bootstrap)
-    result = await server.bootstrap_cv_pool(ctx=make_test_context())
+    result = await server.bootstrap_cv_pool(context=make_test_context())
     assert "3" in result
     assert str(outcome.pool_path) in result
     assert "review" in result.lower()
@@ -2411,12 +2417,12 @@ async def test_bootstrap_cv_pool_tool_blames_a_missing_pdflatex_only_when_it_is_
     monkeypatch.setattr(server, "bootstrap_cv_pool_service", _fake_bootstrap)
 
     monkeypatch.setattr(server, "latex_available", lambda: True)
-    installed = await server.bootstrap_cv_pool(ctx=make_test_context())
+    installed = await server.bootstrap_cv_pool(context=make_test_context())
     assert "pdflatex is installed but the draft did not compile" in installed
     assert "not installed" not in installed
 
     monkeypatch.setattr(server, "latex_available", lambda: False)
-    missing = await server.bootstrap_cv_pool(ctx=make_test_context())
+    missing = await server.bootstrap_cv_pool(context=make_test_context())
     assert "pdflatex is not installed" in missing
 
 
@@ -2427,7 +2433,7 @@ async def test_bootstrap_cv_pool_tool_reports_a_bootstrap_error(monkeypatch):
         raise BootstrapError("no experience entries")
 
     monkeypatch.setattr(server, "bootstrap_cv_pool_service", _fake_bootstrap)
-    result = await server.bootstrap_cv_pool(ctx=make_test_context())
+    result = await server.bootstrap_cv_pool(context=make_test_context())
     assert "no experience entries" in result
 
 
@@ -2436,6 +2442,6 @@ async def test_skip_cv_bootstrap_tool_records_the_decline(temporary_database):
     from moonlighter.core.db import cv_bootstrap_declined, init_db
 
     init_db()
-    result = await server.skip_cv_bootstrap(ctx=make_test_context())
+    result = await server.skip_cv_bootstrap(context=make_test_context())
     assert cv_bootstrap_declined() is True
     assert "won't" in result.lower() or "never" in result.lower() or "skip" in result.lower()

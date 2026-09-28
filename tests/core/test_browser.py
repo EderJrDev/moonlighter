@@ -80,18 +80,20 @@ def test_read_devtools_port_empty_file_returns_none(tmp_path):
 
 
 async def test_launch_browser_uses_random_port_flag(tmp_path):
-    mock_proc = MagicMock()
-    mock_proc.kill = MagicMock()
+    mock_process = MagicMock()
+    mock_process.kill = MagicMock()
     with (
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc) as popen,
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process) as popen,
         patch("moonlighter.core.browser._read_devtools_port", side_effect=[None, 9333]),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
     ):
         port = await browser_mod._launch_browser(_CONFIG, tmp_path)
     assert port == 9333
-    launch_args = popen.call_args.args[0]
-    assert "--remote-debugging-port=0" in launch_args
-    assert not any(a.startswith("--remote-debugging-port=9222") for a in launch_args)
+    launch_arguments = popen.call_args.args[0]
+    assert "--remote-debugging-port=0" in launch_arguments
+    assert not any(
+        argument.startswith("--remote-debugging-port=9222") for argument in launch_arguments
+    )
 
 
 async def test_launch_browser_deletes_stale_port_file_before_launch(tmp_path):
@@ -100,11 +102,11 @@ async def test_launch_browser_deletes_stale_port_file_before_launch(tmp_path):
     silently reconnect to a stale/foreign port (S-03)."""
     stale = tmp_path / "DevToolsActivePort"
     stale.write_text("11111\n/devtools/browser/stale\n")
-    mock_proc = MagicMock()
-    mock_proc.kill = MagicMock()
+    mock_process = MagicMock()
+    mock_process.kill = MagicMock()
 
     with (
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=None),
         patch("moonlighter.core.browser.asyncio.sleep", new=AsyncMock()),
         pytest.raises(RuntimeError),
@@ -115,49 +117,49 @@ async def test_launch_browser_deletes_stale_port_file_before_launch(tmp_path):
 
 
 async def test_launch_browser_raises_when_port_never_appears(tmp_path):
-    mock_proc = MagicMock()
-    mock_proc.kill = MagicMock()
+    mock_process = MagicMock()
+    mock_process.kill = MagicMock()
     with (
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=None),
         patch("moonlighter.core.browser.asyncio.sleep", new=AsyncMock()),
         pytest.raises(RuntimeError, match="Browser"),
     ):
         await browser_mod._launch_browser(_CONFIG, tmp_path)
-    mock_proc.kill.assert_called_once()
+    mock_process.kill.assert_called_once()
 
 
 # ── get_context ───────────────────────────────────────────────────────────────
 
 
 async def test_get_context_launches_browser_when_devtools_not_ready(tmp_path):
-    mock_pw, mock_playwright, _mock_browser, mock_context, mock_proc = _make_cdp_mocks()
+    mock_pw, mock_playwright, _mock_browser, mock_context, mock_process = _make_cdp_mocks()
     config = {**_CONFIG, "browser_session_dir": str(tmp_path)}
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc) as popen,
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process) as popen,
         patch("moonlighter.core.browser._read_devtools_port", side_effect=[None, 9333]),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
         patch("moonlighter.core.browser.asyncio.sleep", new=AsyncMock()),
     ):
-        ctx = await browser_mod.get_context(config)
-    assert ctx is mock_context
+        browser_context = await browser_mod.get_context(config)
+    assert browser_context is mock_context
     popen.assert_called_once()
     mock_playwright.chromium.connect_over_cdp.assert_called_once()
     assert "9333" in mock_playwright.chromium.connect_over_cdp.call_args.args[0]
 
 
 async def test_get_context_skips_launch_when_devtools_already_ready(tmp_path):
-    mock_pw, mock_playwright, _mock_browser, mock_context, mock_proc = _make_cdp_mocks()
+    mock_pw, mock_playwright, _mock_browser, mock_context, mock_process = _make_cdp_mocks()
     config = {**_CONFIG, "browser_session_dir": str(tmp_path)}
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc) as popen,
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process) as popen,
         patch("moonlighter.core.browser._read_devtools_port", return_value=9222),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
     ):
-        ctx = await browser_mod.get_context(config)
-    assert ctx is mock_context
+        browser_context = await browser_mod.get_context(config)
+    assert browser_context is mock_context
     popen.assert_not_called()  # browser was already up, on the port that's ALREADY ours
     mock_playwright.chromium.connect_over_cdp.assert_called_once()
     assert "9222" in mock_playwright.chromium.connect_over_cdp.call_args.args[0]
@@ -167,21 +169,21 @@ async def test_get_context_reuses_connected_browser():
     _, _, mock_browser, mock_context, _ = _make_cdp_mocks()
     browser_mod._browser = mock_browser
     with (
-        patch("moonlighter.core.browser.async_playwright") as pw,
+        patch("moonlighter.core.browser.async_playwright") as async_playwright_patch,
         patch("moonlighter.core.browser.subprocess.Popen") as popen,
     ):
-        ctx = await browser_mod.get_context(_CONFIG)
-    assert ctx is mock_context
-    pw.assert_not_called()
+        browser_context = await browser_mod.get_context(_CONFIG)
+    assert browser_context is mock_context
+    async_playwright_patch.assert_not_called()
     popen.assert_not_called()
 
 
 async def test_get_context_passes_cdp_url_and_slow_mo(tmp_path):
-    mock_pw, mock_playwright, _, _, mock_proc = _make_cdp_mocks()
+    mock_pw, mock_playwright, _, _, mock_process = _make_cdp_mocks()
     config = {**_CONFIG, "slow_mo_ms": 123, "browser_session_dir": str(tmp_path)}
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=9444),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
     ):
@@ -193,10 +195,10 @@ async def test_get_context_passes_cdp_url_and_slow_mo(tmp_path):
 
 async def test_get_context_creates_session_dir(tmp_path):
     config = {**_CONFIG, "browser_session_dir": str(tmp_path / "new_session")}
-    mock_pw, _, _, _, mock_proc = _make_cdp_mocks()
+    mock_pw, _, _, _, mock_process = _make_cdp_mocks()
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=9555),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
     ):
@@ -205,30 +207,30 @@ async def test_get_context_creates_session_dir(tmp_path):
 
 
 async def test_get_context_raises_when_browser_never_ready(tmp_path):
-    mock_pw, _, _, _, mock_proc = _make_cdp_mocks()
+    mock_pw, _, _, _, mock_process = _make_cdp_mocks()
     config = {**_CONFIG, "browser_session_dir": str(tmp_path)}
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=None),
         patch("moonlighter.core.browser.asyncio.sleep", new=AsyncMock()),
         pytest.raises(RuntimeError, match="Browser"),
     ):
         await browser_mod.get_context(config)
-    mock_proc.kill.assert_called_once()  # cleanup do processo travado
+    mock_process.kill.assert_called_once()  # cleanup do processo travado
 
 
 # ── new_page ──────────────────────────────────────────────────────────────────
 
 
 async def test_new_page_returns_page_from_context(tmp_path):
-    mock_pw, _, _, mock_context, mock_proc = _make_cdp_mocks()
+    mock_pw, _, _, mock_context, mock_process = _make_cdp_mocks()
     mock_page = MagicMock()
     mock_context.new_page = AsyncMock(return_value=mock_page)
     config = {**_CONFIG, "browser_session_dir": str(tmp_path)}
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=9666),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
     ):
@@ -301,7 +303,7 @@ async def test_save_screenshot_leaves_an_already_visible_window_alone(tmp_path):
     await browser_mod.save_screenshot(mock_page, job_id=2, step="01-job-page", config=config)
 
     assert not [
-        c for c in mock_cdp.send.call_args_list if c.args[0] == "Browser.setWindowBounds"
+        call for call in mock_cdp.send.call_args_list if call.args[0] == "Browser.setWindowBounds"
     ], "a visible window must not have its state touched"
     mock_page.screenshot.assert_awaited_once()
 
@@ -387,12 +389,12 @@ async def test_get_context_logs_cdp_connected(caplog, tmp_path):
     """get_context() must log 'CDP connected' when it connects successfully."""
     import logging
 
-    mock_pw, _mock_playwright, _mock_browser, _mock_context, mock_proc = _make_cdp_mocks()
+    mock_pw, _mock_playwright, _mock_browser, _mock_context, mock_process = _make_cdp_mocks()
     config = {**_CONFIG, "browser_session_dir": str(tmp_path)}
 
     with (
         patch("moonlighter.core.browser.async_playwright", return_value=mock_pw),
-        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_proc),
+        patch("moonlighter.core.browser.subprocess.Popen", return_value=mock_process),
         patch("moonlighter.core.browser._read_devtools_port", return_value=9777),
         patch("moonlighter.core.browser._devtools_ready", return_value=True),
         caplog.at_level(logging.INFO, logger="moonlighter.core.browser"),
@@ -414,21 +416,21 @@ async def test_detach_disconnects_playwright_but_leaves_the_browser_running():
     mock_browser.close = AsyncMock()
     mock_pw = MagicMock()
     mock_pw.stop = AsyncMock()
-    mock_proc = MagicMock()
+    mock_process = MagicMock()
 
     browser_mod._browser = mock_browser
     browser_mod._playwright = mock_pw
-    browser_mod._browser_process = mock_proc
+    browser_mod._browser_process = mock_process
 
     await browser_mod.detach()
 
     mock_browser.close.assert_awaited_once()
     mock_pw.stop.assert_awaited_once()
-    mock_proc.terminate.assert_not_called()
-    mock_proc.kill.assert_not_called()
+    mock_process.terminate.assert_not_called()
+    mock_process.kill.assert_not_called()
     assert browser_mod._browser is None
     assert browser_mod._playwright is None
-    assert browser_mod._browser_process is mock_proc
+    assert browser_mod._browser_process is mock_process
 
 
 async def test_detach_is_safe_when_nothing_is_connected():

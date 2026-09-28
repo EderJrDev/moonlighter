@@ -12,7 +12,7 @@ def make_test_context(
     llm_caller: Any = None,
 ) -> SimpleNamespace:
     """Build a stand-in Context whose .request_context.lifespan_context is an AppContext.
-    Tool tests pass ctx=make_test_context(...) instead of building the chain by hand.
+    Tool tests pass context=make_test_context(...) instead of building the chain by hand.
 
     llm_caller defaults to a MagicMock, never None: the real server (server.py's
     lifespan) always hands scan_service a real caller from make_caller(config),
