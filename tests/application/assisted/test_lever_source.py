@@ -181,6 +181,12 @@ async def test_lever_publishes_no_separate_required_fields():
         assert await source.required_fields(SourceMatch(source, ("a", "b")), client) == ()
 
 
+def test_posting_from_url_demands_a_real_uuid():
+    assert posting_from_url("https://jobs.lever.co/palantir/" + "-" * 36) is None
+    uuid = "6ed76ce8-4156-4b60-b120-403538bd66cd"
+    assert posting_from_url(f"https://jobs.lever.co/palantir/{uuid}0") is None
+
+
 def test_posting_from_url():
     uuid = "6ed76ce8-4156-4b60-b120-403538bd66cd"
     assert posting_from_url(f"https://jobs.lever.co/palantir/{uuid}") == ("palantir", uuid)

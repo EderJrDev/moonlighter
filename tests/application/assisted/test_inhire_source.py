@@ -28,10 +28,25 @@ def test_an_unknown_required_id_passes_through_verbatim():
     )
 
 
+def test_an_object_shaped_required_entry_uses_its_id_or_name():
+    # Probed in the final review: a dict entry rendered as "{'id': 'linkedin'}".
+    payload = {"settings": {"requiredFields": [{"id": "linkedin"}, {"name": "cpf"}, {"other": 1}]}}
+    assert parse_required_fields(payload) == ("LinkedIn", "cpf")
+
+
 def test_a_payload_without_required_fields_has_none():
     assert parse_required_fields({"settings": {}}) == ()
     assert parse_required_fields({"settings": {"requiredFields": "linkedin"}}) == ()
     assert parse_required_fields(["not", "a", "dict"]) == ()
+
+
+def test_tenant_and_job_from_url_demands_a_real_uuid():
+    assert tenant_and_job_from_url(f"https://infleet.inhire.app/vagas/{JOB_ID}0") is None
+    assert tenant_and_job_from_url("https://infleet.inhire.app/vagas/" + "a" * 36) is None
+    assert tenant_and_job_from_url(f"https://infleet.inhire.app/vagas/{JOB_ID}/candidatura") == (
+        "infleet",
+        JOB_ID,
+    )
 
 
 def test_tenant_and_job_from_url():
@@ -73,13 +88,18 @@ async def test_a_non_200_has_no_required_fields(caplog):
 
 
 async def test_inhire_never_claims_to_have_the_questions():
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(500))
-    ) as client:
-        assert (
-            await InHireSource().questions(SourceMatch(InHireSource(), ("infleet", JOB_ID)), client)
-            == []
-        )
+    # InHire publishes no questions before an application is submitted, so the
+    # source must not even ask: any request here is a bug, not just a 500.
+    requests_made: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        requests_made.append(request)
+        return httpx.Response(200, json={"questions": [{"label": "Q"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as client:
+        source = InHireSource()
+        assert await source.questions(SourceMatch(source, ("infleet", JOB_ID)), client) == []
+    assert requests_made == []
 
 
 async def test_inhire_source_required_fields_delegates_to_the_fetch():

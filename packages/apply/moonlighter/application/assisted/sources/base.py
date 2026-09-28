@@ -17,6 +17,10 @@ from moonlighter.core.db import Job
 
 logger = logging.getLogger(__name__)
 
+# A job id in a URL path: a real 8-4-4-4-12 UUID, not merely 36 id-ish
+# characters, and not the prefix of a longer id.
+UUID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f-])"
+
 
 @dataclass(frozen=True)
 class SourceMatch:
