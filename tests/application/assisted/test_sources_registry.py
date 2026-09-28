@@ -12,6 +12,8 @@ CASES = [
     ("manual", "https://jobs.channable.com/o/x", None),
     ("smartrecruiters", "https://jobs.smartrecruiters.com/x/y", None),
     ("manual", "https://careers.acme.com/jobs/engineer", None),
+    ("workable", "https://apply.workable.com/j/1378093793/apply", "workable"),
+    ("manual", "https://apply.workable.com/devsu/j/C3DABE6A92/", "workable"),
 ]
 
 
