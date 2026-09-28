@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
+from moonlighter.application.assisted.sources.base import SourceMatch
+from moonlighter.core.db import Job
 
 API = "https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{job_id}?questions=true"
 HEADERS = {"User-Agent": "moonlighter/0.1"}
@@ -37,7 +39,9 @@ def board_and_job_from_url(url: str) -> tuple[str, str] | None:
 
 def _options(field: dict[str, Any]) -> tuple[str, ...]:
     return tuple(
-        str(v["label"]) for v in field.get("values") or [] if isinstance(v, dict) and v.get("label")
+        str(value["label"])
+        for value in field.get("values") or []
+        if isinstance(value, dict) and value.get("label")
     )
 
 
@@ -76,3 +80,23 @@ async def fetch_greenhouse_questions(
         return []
     payload = response.json()
     return parse_greenhouse_questions(payload) if isinstance(payload, dict) else []
+
+
+class GreenhouseSource:
+    name = "greenhouse"
+
+    def match(self, job: Job) -> SourceMatch | None:
+        # Keyed on the URL, not job.source: add_job stores source='manual' even
+        # for a recognizable Greenhouse URL, and the regex demands a
+        # greenhouse.io host, so a false positive cannot happen.
+        found = board_and_job_from_url(job.url)
+        return SourceMatch(self, found) if found else None
+
+    async def questions(self, match: SourceMatch, client: httpx.AsyncClient) -> list[FormQuestion]:
+        board, job_id = match.locator
+        return await fetch_greenhouse_questions(board, job_id, client)
+
+    async def required_fields(
+        self, match: SourceMatch, client: httpx.AsyncClient
+    ) -> tuple[str, ...]:
+        return ()

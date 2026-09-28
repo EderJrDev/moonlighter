@@ -9,15 +9,9 @@ from moonlighter.application.answers.answer_bank import load_answer_bank
 from moonlighter.application.assisted.composer import ComposedAnswer, compose_answers
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
 from moonlighter.application.assisted.results import SheetKind, SheetResult
-from moonlighter.application.assisted.sources.greenhouse import (
-    board_and_job_from_url,
-    fetch_greenhouse_questions,
-)
+from moonlighter.application.assisted.sources import registry
+from moonlighter.application.assisted.sources.base import questions_or_empty
 from moonlighter.application.assisted.sources.pasted import extract_questions_from_page
-from moonlighter.application.assisted.sources.recruitee import (
-    fetch_recruitee_questions,
-    host_and_offer_from_url,
-)
 from moonlighter.application.cvgen.service import ensure_tailored_cv, resolved_pool_path
 from moonlighter.core.config import DEFAULTS
 from moonlighter.core.db import Application, Job, cv_bootstrap_declined
@@ -40,16 +34,11 @@ def _job(job_id: int) -> Job | None:
 
 
 async def _questions_from_api(job: Job) -> list[FormQuestion]:
+    match = registry.find_match(job)
+    if match is None:
+        return []
     async with httpx.AsyncClient(timeout=20) as client:
-        # Keyed on the URL, not job.source: add_job stores source='manual' even
-        # for a recognizable Greenhouse URL, and the regex demands a
-        # greenhouse.io host, so a false positive cannot happen. (Recruitee
-        # stays source-gated below — its /o/ pattern matches any host.)
-        if found := board_and_job_from_url(job.url):
-            return await fetch_greenhouse_questions(found[0], found[1], client)
-        if job.source == "recruitee" and (found := host_and_offer_from_url(job.url)):
-            return await fetch_recruitee_questions(found[0], found[1], client)
-    return []
+        return await questions_or_empty(match, client)
 
 
 def _tracking_alias(job: Job, config: dict[str, Any]) -> str | None:
@@ -134,7 +123,9 @@ async def _sheet(
         job_cache=job_cache,
         answer_bank=answer_bank,
     )
-    application.form_data = json.dumps({k: v for k, v in job_cache.items() if _well_shaped(v)})
+    application.form_data = json.dumps(
+        {label: value for label, value in job_cache.items() if _well_shaped(value)}
+    )
     application.save()
     alias = _tracking_alias(job, config)
     if alias is not None:
