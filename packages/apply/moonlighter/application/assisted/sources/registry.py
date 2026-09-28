@@ -2,6 +2,7 @@
 
 from moonlighter.application.assisted.sources.base import QuestionSource, SourceMatch
 from moonlighter.application.assisted.sources.greenhouse import GreenhouseSource
+from moonlighter.application.assisted.sources.inhire import InHireSource
 from moonlighter.application.assisted.sources.lever import LeverSource
 from moonlighter.application.assisted.sources.recruitee import RecruiteeSource
 from moonlighter.application.assisted.sources.workable import WorkableSource
@@ -12,6 +13,7 @@ SOURCES: tuple[QuestionSource, ...] = (
     RecruiteeSource(),
     WorkableSource(),
     LeverSource(),
+    InHireSource(),
 )
 
 

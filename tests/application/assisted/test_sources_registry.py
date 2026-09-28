@@ -21,6 +21,8 @@ CASES = [
         "lever",
     ),
     ("lever", "https://jobs.eu.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd", None),
+    ("inhire", "https://infleet.inhire.app/vagas/1a3ea3dc-5558-45b6-aecb-58e89f5af1dd", "inhire"),
+    ("inhire", "https://infleet.inhire.app/sobre", None),
 ]
 
 
