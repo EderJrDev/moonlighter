@@ -630,6 +630,32 @@ async def test_prepare_application_from_paste_tool_delegates_to_assisted_service
     assert called["args"] == (42, "copied page text")
 
 
+def test_prepare_application_docstring_names_every_ats_source():
+    # The calling model reads this docstring to decide whether to ask for a paste.
+    from moonlighter.application.assisted.sources.registry import SOURCES
+    from moonlighter.server import prepare_application
+
+    display_names = {
+        "greenhouse": "Greenhouse",
+        "recruitee": "Recruitee",
+        "workable": "Workable",
+        "lever": "Lever",
+        "inhire": "InHire",
+    }
+    assert {source.name for source in SOURCES} == set(display_names)
+    doc = " ".join((prepare_application.__doc__ or "").split())
+    for display_name in display_names.values():
+        assert display_name in doc
+    assert "InHire lists its required fields" in doc
+
+
+def test_prepare_application_from_paste_docstring_says_a_published_form_wins():
+    from moonlighter.server import prepare_application_from_paste
+
+    doc = " ".join((prepare_application_from_paste.__doc__ or "").split())
+    assert "the paste is ignored" in doc
+
+
 # ── get_pipeline ──────────────────────────────────────────────────────────────
 
 

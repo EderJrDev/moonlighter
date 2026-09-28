@@ -34,7 +34,7 @@ A conversa é ilustrativa: o Claude repassa a saída da ferramenta com as própr
 
 ## Como preparar sua primeira candidatura
 
-1. **Peça a folha.** "Prepara a candidatura da Acme" roda o `prepare_application`. Quando a API do ATS publica as perguntas do formulário (Greenhouse, Recruitee), o moonlighter as lê de lá.
+1. **Peça a folha.** "Prepara a candidatura da Acme" roda o `prepare_application`. Quando o ATS publica as perguntas do formulário (Greenhouse, Recruitee, Workable, Lever), o moonlighter as lê de lá; o InHire diz de antemão quais campos o formulário exige.
 2. **Sem API? Cole a página.** Quando as perguntas não são publicadas, ele pede que você abra a página da candidatura, selecione tudo, copie e entregue o texto — isso roda o `prepare_application_from_paste`.
 3. **Revise a folha inteira.** Toda pergunta recebe uma resposta rascunhada a partir do seu perfil, ou uma marcação dizendo por que precisa de você. O trecho abaixo está no formato real da ferramenta, com os rótulos em inglês, como ela os imprime; o modelo é instruído a responder UNKNOWN quando o seu perfil não lhe dá base, e isso volta como uma lacuna:
 

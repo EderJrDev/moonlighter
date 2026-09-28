@@ -284,8 +284,10 @@ async def get_job(id: int, *, ctx: Context[AppContext, Any]) -> str:
 async def prepare_application(job_id: int, *, ctx: Context[AppContext, Any]) -> str:
     """
     Produce the full set of answers for a job application, for you to paste into
-    the form yourself. Reads the questions from the ATS API when it publishes them
-    (Greenhouse, Recruitee); otherwise asks you to copy the page.
+    the form yourself. Reads the questions from the ATS when it publishes its form
+    (Greenhouse, Recruitee, Workable, Lever); otherwise asks you to copy the page.
+    InHire lists its required fields in that paste request, so you know up front
+    what its form will insist on.
     job_id: ID of the job
     """
     app = ctx.request_context.lifespan_context
@@ -302,7 +304,9 @@ async def prepare_application_from_paste(
 ) -> str:
     """
     Same as prepare_application, for a page whose questions no API publishes:
-    select the whole application page, copy it, and pass the text here.
+    select the whole application page, copy it, and pass the text here. When the
+    job's ATS publishes its form, the paste is ignored and the published form is
+    used instead.
     job_id: ID of the job
     page_text: everything copied off the application page
     """

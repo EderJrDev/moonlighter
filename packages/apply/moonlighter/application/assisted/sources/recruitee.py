@@ -19,6 +19,8 @@ from typing import Any
 
 import httpx
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
+from moonlighter.application.assisted.sources.base import SourceMatch
+from moonlighter.core.db import Job
 
 API = "https://{host}/api/offers/{offer}"
 HEADERS = {"User-Agent": "moonlighter/0.1"}
@@ -70,24 +72,26 @@ def host_and_offer_from_url(url: str) -> tuple[str, str] | None:
 
 def _choice_options(item: dict[str, Any]) -> tuple[str, ...]:
     entries = [
-        e for e in item.get("open_question_options") or [] if isinstance(e, dict) and e.get("body")
+        entry
+        for entry in item.get("open_question_options") or []
+        if isinstance(entry, dict) and entry.get("body")
     ]
-    entries.sort(key=lambda e: e.get("position", 0))
-    return tuple(str(e["body"]) for e in entries)
+    entries.sort(key=lambda entry: entry.get("position", 0))
+    return tuple(str(entry["body"]) for entry in entries)
 
 
 def _question(item: dict[str, Any]) -> FormQuestion | None:
     label = item.get("body") or item.get("label")
     if not label:
         return None
-    kind_str = str(item.get("kind") or "")
+    kind_name = str(item.get("kind") or "")
     options: tuple[str, ...] = ()
-    if kind_str == "multi_choice":
+    if kind_name == "multi_choice":
         options = _choice_options(item)
         kind = QuestionKind.SINGLE_SELECT if options else QuestionKind.LONG_TEXT
-    elif kind_str in _SIMPLE_KINDS:
-        kind = _SIMPLE_KINDS[kind_str]
-    elif kind_str:
+    elif kind_name in _SIMPLE_KINDS:
+        kind = _SIMPLE_KINDS[kind_name]
+    elif kind_name:
         kind = QuestionKind.LONG_TEXT
     else:
         # No kind info at all: a plain open question, answered in free text.
@@ -133,3 +137,23 @@ async def fetch_recruitee_questions(
         return []
     payload = response.json()
     return parse_recruitee_questions(payload) if isinstance(payload, dict) else []
+
+
+class RecruiteeSource:
+    name = "recruitee"
+
+    def match(self, job: Job) -> SourceMatch | None:
+        # Source-gated: the /o/ pattern alone would match any site.
+        if job.source != "recruitee":
+            return None
+        found = host_and_offer_from_url(job.url)
+        return SourceMatch(self, found) if found else None
+
+    async def questions(self, match: SourceMatch, client: httpx.AsyncClient) -> list[FormQuestion]:
+        host, offer = match.locator
+        return await fetch_recruitee_questions(host, offer, client)
+
+    async def required_fields(
+        self, match: SourceMatch, client: httpx.AsyncClient
+    ) -> tuple[str, ...]:
+        return ()

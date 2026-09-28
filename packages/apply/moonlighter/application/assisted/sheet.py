@@ -13,6 +13,18 @@ NO_QUESTIONS_FOUND = (
     "This is not a completed application: open the form yourself and check it by hand."
 )
 
+# Beyond this many unchosen options the "not chosen" line is a count, not a list:
+# a Lever select of 3,301 countries made one question ~105 KB of sheet.
+LISTED_UNCHOSEN_LIMIT = 20
+
+
+def _not_chosen(others: list[str]) -> list[str]:
+    if not others:
+        return []
+    if len(others) > LISTED_UNCHOSEN_LIMIT:
+        return [f"  not chosen: {len(others)} other options (see the form)"]
+    return [f"  not chosen: {' / '.join(others)}"]
+
 
 def _entry(index: int, total: int, item: ComposedAnswer) -> str:
     question = item.question
@@ -28,15 +40,11 @@ def _entry(index: int, total: int, item: ComposedAnswer) -> str:
         lines.append(f"{GAP} — {item.gap_reason}")
     elif question.kind is QuestionKind.MULTI_SELECT:
         chosen = item.answer.split("\n")
-        lines.extend(f"> {c}" for c in chosen)
-        others = [o for o in question.options if o not in chosen]
-        if others:
-            lines.append(f"  not chosen: {' / '.join(others)}")
+        lines.extend(f"> {pick}" for pick in chosen)
+        lines.extend(_not_chosen([option for option in question.options if option not in chosen]))
     elif question.is_choice:
         lines.append(f"> {item.answer}")
-        others = [o for o in question.options if o != item.answer]
-        if others:
-            lines.append(f"  not chosen: {' / '.join(others)}")
+        lines.extend(_not_chosen([option for option in question.options if option != item.answer]))
     else:
         lines.append(item.answer)
     return "\n".join(lines)
@@ -52,7 +60,7 @@ def render_sheet(
         return "\n".join([*header, NO_QUESTIONS_FOUND])
 
     gaps = sum(1 for item in composed if item.answer is None)
-    body = [_entry(i, total, item) for i, item in enumerate(composed, start=1)]
+    body = [_entry(index, total, item) for index, item in enumerate(composed, start=1)]
     footer = (
         f"{gaps} of {total} need you"
         if gaps

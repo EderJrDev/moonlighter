@@ -17,7 +17,7 @@ uvx moonlighter-apply doctor
 
 Todo comando imprime um documento JSON no stdout.
 
-- **As perguntas de verdade** — onde o ATS publica o formulário (Greenhouse, Recruitee), as perguntas, a obrigatoriedade e as opções vêm direto da API.
+- **As perguntas de verdade** — onde o ATS publica o formulário (Greenhouse, Recruitee, Workable, Lever), as perguntas, a obrigatoriedade e as opções vêm direto dele; o InHire diz de antemão quais campos o formulário exige.
 - **Qualquer outro formulário** — cole o texto da página e as perguntas são lidas dele; funciona em qualquer ATS, inclusive atrás de login.
 - **Lacunas em vez de chutes** — as respostas são rascunhadas a partir de uma parte filtrada do seu perfil. Uma pergunta sem base no perfil volta para você como lacuna, e perguntas que ele reconhece como de salário, compliance ou dados demográficos são preenchidas pela sua config ou deixadas para você, nunca respondidas pelo modelo.
 - **Um CV sob medida, se você quiser** — um CV de uma página em LaTeX para a vaga, com bullets escolhidos de um banco que você escreveu; o `bootstrap-cv` rascunha um primeiro banco a partir do seu perfil.
