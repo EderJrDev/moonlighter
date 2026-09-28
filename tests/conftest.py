@@ -43,7 +43,7 @@ def _isolate_moonlighter_home() -> None:
     Only MOONLIGHTER_HOME is set here: moonlighter.core.db._db_path() already falls
     back to moonlighter_home() / "moonlighter.db" when MOONLIGHTER_DB_PATH is unset, so
     this alone keeps init_db() out of the real directory too. The per-test
-    tmp_db fixture below still overrides MOONLIGHTER_DB_PATH with a fresh path
+    temporary_database fixture below still overrides MOONLIGHTER_DB_PATH with a fresh path
     per test via monkeypatch, which takes precedence over this session-wide
     default since it's set later and per-test.
     """
@@ -62,7 +62,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 @pytest.fixture
-def tmp_db(monkeypatch, tmp_path):
+def temporary_database(monkeypatch, tmp_path):
     """Replace DB_PATH with a temp file for each test."""
     db_path = str(tmp_path / "test.db")
     monkeypatch.setenv("MOONLIGHTER_DB_PATH", db_path)

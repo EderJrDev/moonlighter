@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
-from moonlighter.application.assisted.sources.base import SourceMatch
+from moonlighter.application.assisted.sources.base import UUID_PATTERN, SourceMatch
 from moonlighter.core.db import Job
 
 APPLY_PAGE = "https://jobs.lever.co/{company}/{posting_id}/apply"
@@ -33,7 +33,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; moonlighter/0.1)"}
 
 logger = logging.getLogger(__name__)
 
-_URL = re.compile(r"https?://jobs\.lever\.co/(?P<company>[^/]+)/(?P<posting_id>[0-9a-f-]{36})")
+_URL = re.compile(rf"https?://jobs\.lever\.co/(?P<company>[^/]+)/(?P<posting_id>{UUID_PATTERN})")
 
 _CARD_KINDS = {
     "text": QuestionKind.TEXT,

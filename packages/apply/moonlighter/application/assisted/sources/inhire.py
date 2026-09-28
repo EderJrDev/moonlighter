@@ -13,7 +13,7 @@ import re
 
 import httpx
 from moonlighter.application.assisted.questions import FormQuestion
-from moonlighter.application.assisted.sources.base import SourceMatch
+from moonlighter.application.assisted.sources.base import UUID_PATTERN, SourceMatch
 from moonlighter.core.db import Job
 
 API = "https://api.inhire.app/job-posts/public/pages/{job_id}"
@@ -21,7 +21,7 @@ HEADERS = {"User-Agent": "moonlighter/0.1"}
 
 logger = logging.getLogger(__name__)
 
-_URL = re.compile(r"https?://(?P<tenant>[\w-]+)\.inhire\.app/vagas/(?P<job_id>[0-9a-f-]{36})")
+_URL = re.compile(rf"https?://(?P<tenant>[\w-]+)\.inhire\.app/vagas/(?P<job_id>{UUID_PATTERN})")
 
 _LABELS = {
     "linkedin": "LinkedIn",
@@ -43,7 +43,15 @@ def parse_required_fields(payload: object) -> tuple[str, ...]:
     required_ids = settings.get("requiredFields") if isinstance(settings, dict) else None
     if not isinstance(required_ids, list):
         return ()
-    return tuple(_LABELS.get(str(field_id), str(field_id)) for field_id in required_ids if field_id)
+    field_ids = [_field_id(entry) for entry in required_ids]
+    return tuple(_LABELS.get(field_id, field_id) for field_id in field_ids if field_id)
+
+
+def _field_id(entry: object) -> str:
+    """A required entry is usually a bare id; an object carries it as `id` or `name`."""
+    if isinstance(entry, dict):
+        return str(entry.get("id") or entry.get("name") or "")
+    return str(entry) if entry else ""
 
 
 async def fetch_inhire_required_fields(

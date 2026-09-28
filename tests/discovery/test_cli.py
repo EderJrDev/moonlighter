@@ -26,8 +26,18 @@ def _patched(report):
 def test_parse_args_defaults_and_no_eval():
     from moonlighter.discovery.cli import parse_args
 
-    args = parse_args([])
-    assert (args.keywords, args.phase, args.no_eval, args.company) == ("", "phase1", False, None)
+    parsed_arguments = parse_args([])
+    assert (
+        parsed_arguments.keywords,
+        parsed_arguments.phase,
+        parsed_arguments.no_eval,
+        parsed_arguments.company,
+    ) == (
+        "",
+        "phase1",
+        False,
+        None,
+    )
     assert parse_args(["--no-eval", "--phase", "all"]).no_eval is True
     assert parse_args(["--company", "greenhouse", "acme"]).company == ["greenhouse", "acme"]
 
@@ -38,16 +48,16 @@ def test_parse_args_rejects_a_phase_outside_the_configured_set(capsys):
     # genuinely quiet day -- a cron never learns it is scanning nothing.
     from moonlighter.discovery.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args(["--phase", "phase9"])
-    assert exc.value.code == 2
+    assert exit_info.value.code == 2
     # JsonArgumentParser: stdout still carries the contract's one JSON
     # document, not zero bytes, even on a bad flag.
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "usage_error"
 
 
-async def test_run_evaluated_scan_exits_0_with_the_report_as_json(tmp_db):
+async def test_run_evaluated_scan_exits_0_with_the_report_as_json(temporary_database):
     from moonlighter.discovery.cli import _run, parse_args
 
     report = ScanReport(kind=ScanKind.EVALUATED, threshold=6.5)
@@ -58,7 +68,7 @@ async def test_run_evaluated_scan_exits_0_with_the_report_as_json(tmp_db):
     json.dumps(payload)
 
 
-async def test_run_nothing_new_exits_1(tmp_db):
+async def test_run_nothing_new_exits_1(temporary_database):
     from moonlighter.discovery.cli import _run, parse_args
 
     report = ScanReport(kind=ScanKind.NO_NEW_JOBS, threshold=6.5)
@@ -67,7 +77,7 @@ async def test_run_nothing_new_exits_1(tmp_db):
     assert (payload["kind"], code) == ("no_new_jobs", 1)
 
 
-async def test_run_unknown_source_exits_2(tmp_db):
+async def test_run_unknown_source_exits_2(temporary_database):
     from moonlighter.discovery.cli import _run, parse_args
 
     report = ScanReport(
@@ -79,7 +89,7 @@ async def test_run_unknown_source_exits_2(tmp_db):
     assert payload["error"].startswith("Unknown source")
 
 
-async def test_run_no_eval_passes_no_caller_to_the_service(tmp_db):
+async def test_run_no_eval_passes_no_caller_to_the_service(temporary_database):
     # The whole point of --no-eval: make_caller is never even constructed.
     from moonlighter.discovery import cli
     from moonlighter.discovery.cli import _run, parse_args
@@ -104,7 +114,7 @@ def test_scan_keeps_its_flag_grammar_and_gains_doctor():
     assert parse_args(["doctor"]).command == "doctor"
 
 
-async def test_scan_doctor_returns_the_doctor_payload(tmp_db):
+async def test_scan_doctor_returns_the_doctor_payload(temporary_database):
     from moonlighter.discovery import cli
 
     with patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)):
@@ -115,7 +125,7 @@ async def test_scan_doctor_returns_the_doctor_payload(tmp_db):
 def test_scan_help_carries_the_slice_epilog(capsys):
     from moonlighter.discovery.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args(["--help"])
-    assert exc.value.code == 0
+    assert exit_info.value.code == 0
     assert "installed:" in capsys.readouterr().out

@@ -4,17 +4,13 @@ from moonlighter.core.db import Job, init_db
 
 
 @pytest.fixture
-def job_factory(request):
+def job_factory(temporary_database):
     """Create a Job row in the in-memory test database.
 
     Follows the pattern used in tests/application/test_service.py: the shared
-    tmp_db fixture points MOONLIGHTER_DB_PATH at a fresh temp file, init_db()
-    creates the schema in it, and Job.create() persists the row callers ask
-    for. Pulled in via getfixturevalue rather than as a declared parameter so
-    this file's parameter names stay full words without renaming the shared
-    fixture everywhere else it is used.
+    temporary_database fixture points MOONLIGHTER_DB_PATH at a fresh temp file, init_db()
+    creates the schema in it, and Job.create() persists the row callers ask for.
     """
-    request.getfixturevalue("tmp_db")
     init_db()
 
     def _make(**overrides: object) -> Job:

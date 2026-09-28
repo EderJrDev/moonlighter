@@ -42,8 +42,7 @@ def _job(**overrides):
     return Job.create(**defaults)
 
 
-async def test_prepare_application_plain_sheet_is_unchanged(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_plain_sheet_is_unchanged(temporary_database, snapshot_text):
     job = _job()
     with (
         patch(
@@ -60,8 +59,7 @@ async def test_prepare_application_plain_sheet_is_unchanged(request, snapshot_te
     snapshot_text(out, "plain_sheet")
 
 
-async def test_prepare_application_appends_the_alias_note(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_appends_the_alias_note(temporary_database, snapshot_text):
     # The alias note fires only when NO question on the sheet takes the alias,
     # so this passes a question list with no email field.
     job = _job(url="https://boards.greenhouse.io/acme/jobs/2")
@@ -88,8 +86,9 @@ async def test_prepare_application_appends_the_alias_note(request, snapshot_text
     snapshot_text(render_sheet_result(result), "alias_note")
 
 
-async def test_prepare_application_appends_the_uncompiled_cv_note(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_appends_the_uncompiled_cv_note(
+    temporary_database, snapshot_text
+):
     job = _job(url="https://boards.greenhouse.io/acme/jobs/3")
     uncompiled = TailoredCV(Path("/tmp/moonlighter-test-cv/cv.tex"), False)
     with (
@@ -107,8 +106,7 @@ async def test_prepare_application_appends_the_uncompiled_cv_note(request, snaps
     snapshot_text(out, "cv_note")
 
 
-async def test_prepare_application_appends_the_compiled_cv_note(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_appends_the_compiled_cv_note(temporary_database, snapshot_text):
     # Compiled CV, no CV/FILE question on the sheet to name it -- _names_path is
     # False since none of QUESTIONS carries a gap_reason mentioning this path.
     job = _job(url="https://boards.greenhouse.io/acme/jobs/4")
@@ -128,16 +126,16 @@ async def test_prepare_application_appends_the_compiled_cv_note(request, snapsho
     snapshot_text(out, "compiled_cv_note")
 
 
-async def test_prepare_application_job_not_found_is_unchanged(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_job_not_found_is_unchanged(temporary_database, snapshot_text):
     init_db()
     snapshot_text(
         render_sheet_result(await prepare_application(4242, CONFIG, PROFILE)), "job_not_found"
     )
 
 
-async def test_prepare_application_with_no_questions_returns_the_paste_hint(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_with_no_questions_returns_the_paste_hint(
+    temporary_database, snapshot_text
+):
     job = _job(url="https://boards.greenhouse.io/acme/jobs/5")
     with patch(
         "moonlighter.application.assisted.service._api_form",
@@ -199,8 +197,7 @@ def test_render_sheet_result_orders_alias_note_before_cv_note(composed_fixture):
     assert alias_at < cv_at
 
 
-async def test_prepare_from_paste_sheet_is_unchanged(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_from_paste_sheet_is_unchanged(temporary_database, snapshot_text):
     job = _job(url="https://boards.greenhouse.io/acme/jobs/4")
     with (
         patch(
@@ -223,8 +220,7 @@ async def test_prepare_from_paste_sheet_is_unchanged(request, snapshot_text):
     snapshot_text(out, "paste_sheet")
 
 
-async def test_prepare_from_paste_no_questions_is_unchanged(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_from_paste_no_questions_is_unchanged(temporary_database, snapshot_text):
     job = _job(url="https://boards.greenhouse.io/acme/jobs/5")
     with (
         patch(
@@ -242,8 +238,7 @@ async def test_prepare_from_paste_no_questions_is_unchanged(request, snapshot_te
     snapshot_text(out, "paste_no_questions")
 
 
-async def test_prepare_from_paste_job_not_found_is_unchanged(request, snapshot_text):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_from_paste_job_not_found_is_unchanged(temporary_database, snapshot_text):
     init_db()
     out = render_sheet_result(await prepare_application_from_paste(4242, PAGE, CONFIG, PROFILE))
     snapshot_text(out, "paste_job_not_found")
@@ -262,8 +257,7 @@ def test_sheet_result_kind_and_error_agree():
         )
 
 
-async def test_prepare_application_reports_the_cv_path_and_compiled_flag(request):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_reports_the_cv_path_and_compiled_flag(temporary_database):
     # cv_note carried the path inside an English sentence; a script needs the
     # path and the flag as fields. The note is unchanged (snapshot).
     job = _job(url="https://boards.greenhouse.io/acme/jobs/9")
@@ -285,8 +279,7 @@ async def test_prepare_application_reports_the_cv_path_and_compiled_flag(request
     assert result.cv_compiled is True
 
 
-async def test_prepare_application_needs_paste_carries_the_job_url(request):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_needs_paste_carries_the_job_url(temporary_database):
     # failed_sheet() built apply_url="" for every early-check failure, but the
     # NEEDS_PASTE call site has job.url in hand (it's already in PASTE_HINT's
     # message) -- a script reading apply_url off a needs_paste result got
@@ -301,8 +294,9 @@ async def test_prepare_application_needs_paste_carries_the_job_url(request):
     assert result.apply_url == job.url
 
 
-async def test_prepare_application_not_found_has_the_kind_a_script_can_switch_on(request):
-    request.getfixturevalue("tmp_db")
+async def test_prepare_application_not_found_has_the_kind_a_script_can_switch_on(
+    temporary_database,
+):
     init_db()
     result = await prepare_application(4242, CONFIG, PROFILE)
     assert result.kind is SheetKind.JOB_NOT_FOUND

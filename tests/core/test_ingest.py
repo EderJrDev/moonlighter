@@ -4,7 +4,7 @@ from moonlighter.core.db import Job, ScanLog, init_db
 from moonlighter.core.posting import FetchedPosting
 
 
-async def test_job_from_url_returns_the_existing_job_without_fetching(tmp_db):
+async def test_job_from_url_returns_the_existing_job_without_fetching(temporary_database):
     from moonlighter.core.ingest import job_from_url
 
     init_db()
@@ -22,7 +22,7 @@ async def test_job_from_url_returns_the_existing_job_without_fetching(tmp_db):
     assert job is not None and job.id == existing.id
 
 
-async def test_job_from_url_ingests_via_the_ats_api_unscored(tmp_db):
+async def test_job_from_url_ingests_via_the_ats_api_unscored(temporary_database):
     from moonlighter.core.ingest import job_from_url
 
     init_db()
@@ -45,7 +45,7 @@ async def test_job_from_url_ingests_via_the_ats_api_unscored(tmp_db):
     assert ScanLog.select().where(ScanLog.job_url == job.url).exists()  # a later scan dedups it
 
 
-async def test_job_from_url_falls_back_to_the_generic_fetch_for_the_description(tmp_db):
+async def test_job_from_url_falls_back_to_the_generic_fetch_for_the_description(temporary_database):
     from moonlighter.core.ingest import job_from_url
 
     init_db()
@@ -61,7 +61,7 @@ async def test_job_from_url_falls_back_to_the_generic_fetch_for_the_description(
     assert job is not None and job.description == "Generic text"
 
 
-async def test_job_from_url_is_none_when_the_posting_cannot_be_named(tmp_db):
+async def test_job_from_url_is_none_when_the_posting_cannot_be_named(temporary_database):
     # No ATS match and no overrides: the page cannot name itself, so the
     # generic fetch (an HTTP request) must never run -- a Job row with empty
     # company would poison list_jobs and the sheet header anyway.
@@ -79,7 +79,7 @@ async def test_job_from_url_is_none_when_the_posting_cannot_be_named(tmp_db):
     assert Job.select().count() == 0
 
 
-async def test_job_from_url_with_overrides_ingests_a_non_ats_page(tmp_db):
+async def test_job_from_url_with_overrides_ingests_a_non_ats_page(temporary_database):
     # No ATS match, but --company/--title supplied: the page can now be
     # named, so the generic fetch runs to supply the description.
     from moonlighter.core.ingest import job_from_url
@@ -99,7 +99,7 @@ async def test_job_from_url_with_overrides_ingests_a_non_ats_page(tmp_db):
     assert (job.company, job.title, job.description) == ("Acme", "Staff Eng", "Page text")
 
 
-async def test_job_from_url_is_none_when_the_fetch_fails(tmp_db):
+async def test_job_from_url_is_none_when_the_fetch_fails(temporary_database):
     from moonlighter.core.ingest import job_from_url
 
     init_db()
