@@ -2,11 +2,17 @@
 
 from moonlighter.application.assisted.sources.base import QuestionSource, SourceMatch
 from moonlighter.application.assisted.sources.greenhouse import GreenhouseSource
+from moonlighter.application.assisted.sources.lever import LeverSource
 from moonlighter.application.assisted.sources.recruitee import RecruiteeSource
 from moonlighter.application.assisted.sources.workable import WorkableSource
 from moonlighter.core.db import Job
 
-SOURCES: tuple[QuestionSource, ...] = (GreenhouseSource(), RecruiteeSource(), WorkableSource())
+SOURCES: tuple[QuestionSource, ...] = (
+    GreenhouseSource(),
+    RecruiteeSource(),
+    WorkableSource(),
+    LeverSource(),
+)
 
 
 def find_match(job: Job) -> SourceMatch | None:

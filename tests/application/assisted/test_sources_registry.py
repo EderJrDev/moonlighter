@@ -14,6 +14,13 @@ CASES = [
     ("manual", "https://careers.acme.com/jobs/engineer", None),
     ("workable", "https://apply.workable.com/j/1378093793/apply", "workable"),
     ("manual", "https://apply.workable.com/devsu/j/C3DABE6A92/", "workable"),
+    ("lever", "https://jobs.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd", "lever"),
+    (
+        "manual",
+        "https://jobs.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd/apply",
+        "lever",
+    ),
+    ("lever", "https://jobs.eu.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd", None),
 ]
 
 
