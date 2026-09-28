@@ -34,7 +34,7 @@ The conversation is illustrative: Claude relays the tool's output in its own wor
 
 ## How to prepare your first application
 
-1. **Ask for the sheet.** "Prepare the application for the Acme one" runs `prepare_application`. Where the ATS API publishes the form's questions (Greenhouse, Recruitee), moonlighter reads them from there.
+1. **Ask for the sheet.** "Prepare the application for the Acme one" runs `prepare_application`. Where the ATS publishes the form's questions (Greenhouse, Recruitee, Workable, Lever), moonlighter reads them from there; InHire tells you up front which fields its form requires.
 2. **No API? Paste the page.** When the questions aren't published, it asks you to open the application page, select all, copy, and hand the text over — that runs `prepare_application_from_paste`.
 3. **Review the whole sheet.** Every question gets an answer drafted from your profile, or a flag saying why it needs you. This excerpt is in the tool's real format; the model is told to answer UNKNOWN when your profile gives it no basis, and that comes back as a gap:
 
