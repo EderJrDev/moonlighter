@@ -5,8 +5,8 @@ from moonlighter._tool_logging import tool_logged
 
 async def test_returns_value_unchanged():
     @tool_logged
-    async def sample(a: int, b: int = 2) -> str:
-        return f"{a}-{b}"
+    async def sample(first: int, second: int = 2) -> str:
+        return f"{first}-{second}"
 
     assert await sample(1) == "1-2"
 
@@ -40,8 +40,8 @@ async def test_unexpected_exception_returns_uniform_line_and_logs(caplog):
 
 def test_preserves_signature():
     @tool_logged
-    async def sample(a: int, ctx: str = "x") -> str:
+    async def sample(first: int, context: str = "x") -> str:
         return "ok"
 
     params = list(inspect.signature(sample).parameters)
-    assert params == ["a", "ctx"]  # FastMCP must still see the tool params
+    assert params == ["first", "context"]  # FastMCP must still see the tool params
