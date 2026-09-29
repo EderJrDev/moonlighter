@@ -189,3 +189,39 @@ async def test_a_yes_no_question_with_a_required_marker_is_still_a_question(labe
     call, _ = fake_llm(reply)
     questions = await extract_questions_from_page(PAGE, call)
     assert questions[0].kind is QuestionKind.SINGLE_SELECT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "clean"),
+    [
+        ("Nome completo *", "Nome completo"),
+        ("E-mail (obrigatório)", "E-mail"),
+        ("Telefone (opcional)", "Telefone"),
+        ("LinkedIn URL (optional)", "LinkedIn URL"),
+        ("Photo (Optional)", "Photo"),
+        ("Resume (required)", "Resume"),
+        (
+            "Você já trabalhou em RH anteriormente? (obrigatório)",
+            "Você já trabalhou em RH anteriormente?",
+        ),
+        ("Do you need sponsorship? *", "Do you need sponsorship?"),
+        ("*\nFirst name", "First name"),
+        ("Pretensão salarial (R$) (opcional)", "Pretensão salarial (R$)"),
+    ],
+)
+async def test_the_label_comes_back_without_its_required_or_optional_marker(label, clean):
+    """Decided 2026-09-29: the label is the question, the marker is `required`.
+    The model already drops markers on its own (forge PT-BR run), and field_map
+    strips them before matching anyway; the code makes it deterministic."""
+    reply = json.dumps({"questions": [{"label": label, "kind": "text", "required": True}]})
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].label == clean
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_asks_for_labels_without_markers():
+    call, captured = fake_llm(json.dumps({"questions": []}))
+    await extract_questions_from_page(PAGE, call)
+    assert "without its required or optional marker" in captured["prompt"]
