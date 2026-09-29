@@ -390,3 +390,17 @@ async def test_apply_doctor_online_reports_a_broken_config_instead_of_crashing(
     assert payload["links"] is None
     assert "bad yaml" in payload["links_error"]
     assert code == 1
+
+
+async def test_apply_doctor_online_says_when_there_was_nothing_to_check(temporary_database):
+    """An empty list read the same as "every link works" (2026-09-29 review)."""
+    from moonlighter.application import cli
+
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)),
+        patch.object(cli, "link_report", AsyncMock(return_value=[])),
+    ):
+        payload, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    assert payload["links"] == []
+    assert "no CV template" in payload["links_note"]
+    assert code == 0

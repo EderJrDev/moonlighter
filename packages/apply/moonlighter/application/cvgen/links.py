@@ -24,11 +24,24 @@ _SOCIAL_URL = {
 # LinkedIn answers every automated request with this status: it says nothing
 # about whether the profile exists.
 _BOT_WALL_STATUS = 999
-_COMMENT = re.compile(r"(?<!\\)%")
+
+
+def _strip_comment(line: str) -> str:
+    """Drop a LaTeX comment, mid-line too. A % is escaped only by an odd run of
+    backslashes: after a line break (two) it starts a comment."""
+    for position, character in enumerate(line):
+        if character != "%":
+            continue
+        backslashes = len(line[:position]) - len(line[:position].rstrip("\\"))
+        if backslashes % 2 == 0:
+            return line[:position]
+    return line
 
 
 def _is_marker(value: str) -> bool:
-    return "{" in value or "%" in value
+    """An unfilled template marker ({{LINKEDIN_USERNAME}}, %%BASE_SUMMARY%%). A
+    lone % stays: "%20" is part of a real URL."""
+    return "{" in value or "%%" in value
 
 
 def template_links(text: str) -> list[str]:
@@ -36,8 +49,7 @@ def template_links(text: str) -> list[str]:
     lines and unfilled markers ({{LINKEDIN_USERNAME}}) are skipped."""
     links: list[str] = []
     for line in text.splitlines():
-        # An unescaped % starts a LaTeX comment, mid-line too.
-        line = _COMMENT.split(line, maxsplit=1)[0]
+        line = _strip_comment(line)
         found = [
             (match.start(), _SOCIAL_URL[match[1]].format(match[2]))
             for match in _SOCIAL_COMMAND.finditer(line)

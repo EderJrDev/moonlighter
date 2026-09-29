@@ -114,6 +114,11 @@ async def _run(arguments: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 payload["links_error"] = f"config does not load: {error}"
                 return payload, code
             payload["links"] = await link_report(config)
+            if not payload["links"]:
+                # An empty list read the same as "every link works".
+                payload["links_note"] = (
+                    "no CV template with header links found in cv.template_dir; nothing checked"
+                )
             if code == EXIT_OK and any(link["ok"] is False for link in payload["links"]):
                 code = EXIT_NOTHING
         return payload, code

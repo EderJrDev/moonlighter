@@ -35,6 +35,13 @@ class FetchedPosting:
     remote: bool = False
 
 
+def _is_true(value: object) -> bool:
+    """A JSON flag that may arrive as a string: bool("false") is True."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return value is True or value == 1
+
+
 def strip_tags(raw: str) -> str | None:
     text = re.sub(r"<[^>]+>", " ", raw)
     return re.sub(r"\s+", " ", text).strip() or None
@@ -100,7 +107,7 @@ async def _fetch_recruitee_offer(host: str, offer: str) -> FetchedPosting | None
                 title=item.get("title"),
                 description=strip_tags(item.get("description") or ""),
                 location=item.get("location"),
-                remote=bool(item.get("remote")),
+                remote=_is_true(item.get("remote")),
             )
     return None
 

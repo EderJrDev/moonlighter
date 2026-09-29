@@ -64,6 +64,8 @@ _PRECEDENCE = {
     ),
 }
 
+LOCATION_PRECEDENCES = tuple(_PRECEDENCE)
+
 
 def regional_eligibility_section(profile: dict[str, Any]) -> str:
     criteria = profile.get("criteria") or {}

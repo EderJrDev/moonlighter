@@ -282,3 +282,17 @@ def test_strip_tags_is_public_so_other_packages_can_import_it_directly():
     # leading underscore would make that a private-symbol reach-in.
     assert strip_tags("<p>Hello  world</p>") == "Hello world"
     assert strip_tags("  ") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "remote"), [("false", False), ("true", True), (0, False), (None, False)]
+)
+async def test_recruitee_remote_flag_is_read_as_a_value_not_as_truthiness(flag, remote):
+    """bool("false") is True: a string flag must not make an office job remote."""
+    offers = {"offers": [{**RECRUITEE_OFFERS["offers"][0], "location": "Utrecht", "remote": flag}]}
+    client_class, _client_mock = _client(offers)
+    with patch("httpx.AsyncClient", client_class):
+        posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
+    assert posting is not None
+    assert posting.remote is remote
