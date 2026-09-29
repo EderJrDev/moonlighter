@@ -26,6 +26,7 @@ Every `moonlighter-*` command, and `moonlighter doctor`, prints exactly one JSON
 | `moonlighter-email sync` | Classify recent replies and advance applications. Standalone it does not feed the [answer bank](../guides/answer-bank.md); the MCP server's `sync_email_responses` does. |
 | `moonlighter-email register JOB_ID` | Mark a job as applied by hand and mint its `+ref` tracking alias, so replies to it are matched by `sync`. |
 | `moonlighter-scan doctor` · `moonlighter-apply doctor` · `moonlighter-email doctor` · `moonlighter doctor` | Where the state lives and whether the config loads, as JSON; exit `1` when the config is missing or invalid. |
+| `moonlighter-apply doctor --online` | The same, plus a request to every link in your CV templates' header (GitHub, LinkedIn, homepage); exit `1` if one is broken. A site that refuses automated checks (LinkedIn often does) is listed with `"ok": null` for you to open by hand. |
 
 ```sh
 moonlighter-scan --no-eval | jq '.saved[] | select(.status == "needs_review") | .url'
