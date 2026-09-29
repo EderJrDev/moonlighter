@@ -779,6 +779,50 @@ async def test_get_pipeline_warnings_distinguish_error_and_warn_levels(
     assert "[WARN]" in result
 
 
+# ── reopen_job ────────────────────────────────────────────────────────────────
+
+
+async def test_reopen_job_brings_an_archived_job_back_to_reviewed(temporary_database):
+    """Before this tool the only way to try an archived job anyway was editing the
+    DB by hand (Encora #8314/#8315, 2026-09-24)."""
+    import datetime
+
+    init_db()
+    job = create_job(
+        temporary_database,
+        url="https://x.com/reopen1",
+        status="archived",
+        closed_at=datetime.datetime(2026, 9, 1),
+    )
+    from moonlighter.server import reopen_job
+
+    result = await reopen_job(job_id=job.id, context=make_test_context())
+    reopened = Job.get_by_id(job.id)
+    assert reopened.status == "reviewed"
+    assert reopened.closed_at is None
+    assert f"#{job.id}" in result
+    assert "reviewed" in result
+
+
+async def test_reopen_job_refuses_a_job_that_is_not_archived(temporary_database):
+    init_db()
+    job = create_job(temporary_database, url="https://x.com/reopen2", status="applied")
+    from moonlighter.server import reopen_job
+
+    result = await reopen_job(job_id=job.id, context=make_test_context())
+    assert Job.get_by_id(job.id).status == "applied"
+    assert "not archived" in result
+    assert "applied" in result
+
+
+async def test_reopen_job_reports_an_unknown_id(temporary_database):
+    init_db()
+    from moonlighter.server import reopen_job
+
+    result = await reopen_job(job_id=999, context=make_test_context())
+    assert "not found" in result
+
+
 # ── update_status ─────────────────────────────────────────────────────────────
 
 

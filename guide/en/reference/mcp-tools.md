@@ -2,7 +2,7 @@
 
 # MCP tools
 
-The `moonlighter` MCP server exposes 17 tools. You rarely call them by name: ask Claude in plain words ("scan my companies", "prepare the application for job 42") and it picks the tool. The names below are what shows up in Claude's tool calls.
+The `moonlighter` MCP server exposes 18 tools. You rarely call them by name: ask Claude in plain words ("scan my companies", "prepare the application for job 42") and it picks the tool. The names below are what shows up in Claude's tool calls.
 
 ## Scan and score
 
@@ -21,6 +21,7 @@ The `moonlighter` MCP server exposes 17 tools. You rarely call them by name: ask
 | `list_jobs` | List jobs by status (`new`, `needs_review`, `applied`, `rejected`, `archived`, …) |
 | `get_job` | Show full details and pipeline history for a job |
 | `get_pipeline` | Full pipeline summary — and setup problems, such as a missing profile or CV |
+| `reopen_job` | Bring an archived job back to `reviewed`, to apply to it anyway |
 | `update_status` | Manually move a job's application through the pipeline (`submitted`, `screening`, `interviews`, `offer`, `rejected`, `draft`) |
 
 ## Prepare applications

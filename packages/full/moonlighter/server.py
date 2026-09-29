@@ -372,6 +372,31 @@ async def get_pipeline(*, context: Context[AppContext, Any]) -> str:
 
 @mcp.tool()
 @tool_logged
+async def reopen_job(
+    job_id: int,
+    *,
+    context: Context[AppContext, Any],
+) -> str:
+    """Bring an archived job back to 'reviewed', to apply to it anyway.
+
+    Use when the person wants to try a job the scan or archive_stale_jobs archived
+    (a low score they disagree with, a posting still open). Only an archived job
+    can be reopened; its closed_at is cleared.
+    """
+    try:
+        job = Job.get_by_id(job_id)
+    except Job.DoesNotExist:
+        return f"Job #{job_id} not found."
+    if job.status != "archived":
+        return f"Job #{job_id} is not archived (status: {job.status!r}); nothing to reopen."
+    job.status = "reviewed"
+    job.closed_at = None
+    job.save()
+    return f"✓ Job #{job_id} ({job.company}/{job.title}): archived → reviewed"
+
+
+@mcp.tool()
+@tool_logged
 async def update_status(
     job_id: int,
     status: str,
