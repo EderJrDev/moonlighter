@@ -33,6 +33,45 @@ def profile_for_eval(profile: dict[str, Any]) -> dict[str, Any]:
     return {key: profile[key] for key in _EVAL_PROFILE_KEYS if key in profile}
 
 
+_REGIONAL_ELIGIBILITY = """## Regional eligibility
+When a hard filter concerns where the candidate can work from, judge it against the posting's
+Location and Remote type lines as well as the description. When a Location line names a country,
+region or city that neither it nor the description opens to the candidate, that is a triggered hard
+filter — do not reinterpret the stated location as an inconsistency to discount; score it ≤ 2.0 and
+record the reason in `caveats`. With no such hard filter, location alone never caps the score.
+{precedence}
+When the posting requires fluency in a language the candidate's profile does not list under
+`languages` (e.g. "fluent Italian required"), that is a triggered hard filter: score it ≤ 2.0 and
+record it in `caveats`, prefixed "language:". A language listed as a plus or nice-to-have is not.
+"""
+
+# criteria.location_precedence in profile.yaml: which wins when a description
+# carries both a company-wide remote claim and a posting-specific location. The
+# default is "specific": ElevenLabs Netherlands/Italy (2026-09-28) scored 6.3-8.0
+# because a boilerplate "can be executed globally" beat "from anywhere in Italy,
+# Italian required" further down.
+_PRECEDENCE = {
+    "specific": (
+        'When the description has both a generic company-wide remote claim ("this role is remote and\n'
+        'can be executed globally") and a posting-specific location paragraph ("from anywhere in\n'
+        'Italy"), the posting-specific location paragraph wins: judge eligibility by it.'
+    ),
+    "generic": (
+        'When the description has both a generic company-wide remote claim ("this role is remote and\n'
+        'can be executed globally") and a posting-specific location paragraph ("from anywhere in\n'
+        'Italy"), the generic company-wide remote claim wins, as the candidate chose: treat the\n'
+        "posting as open unless its Location line itself excludes the candidate."
+    ),
+}
+
+
+def regional_eligibility_section(profile: dict[str, Any]) -> str:
+    criteria = profile.get("criteria") or {}
+    choice = criteria.get("location_precedence") if isinstance(criteria, dict) else None
+    precedence = _PRECEDENCE.get(str(choice), _PRECEDENCE["specific"])
+    return _REGIONAL_ELIGIBILITY.format(precedence=precedence)
+
+
 def should_skip_by_title(title: str, blocklist: list[str]) -> str | None:
     """Returns the pattern that matched if the title should be discarded, or None.
 
@@ -57,12 +96,7 @@ The candidate's profile contains `criteria.hard_filters`. These are non-negotiab
 If ANY hard filter is triggered by the job posting, the score MUST be ≤ 2.0, regardless of stack match or other positives.
 List the violated filter(s) in `caveats`.
 
-## Regional eligibility
-When a hard filter concerns where the candidate can work from, judge it against the posting's
-Location and Remote type lines as well as the description. When a Location line names a country,
-region or city that neither it nor the description opens to the candidate, that is a triggered hard
-filter — do not reinterpret the stated location as an inconsistency to discount; score it ≤ 2.0 and
-record the reason in `caveats`. With no such hard filter, location alone never caps the score.
+{regional_eligibility}
 
 ## Mandatory requirements
 When the posting marks a requirement as mandatory/required/must-have/non-negotiable and the
@@ -168,7 +202,8 @@ async def evaluate_job(
     logger.debug("evaluating %s/%s", company, title)
     # Static prefix (profile + instructions) → cacheable; dynamic suffix = just the job.
     prefix = EVAL_PREFIX.format(
-        profile_yaml=yaml.dump(profile_for_eval(profile), allow_unicode=True)
+        profile_yaml=yaml.dump(profile_for_eval(profile), allow_unicode=True),
+        regional_eligibility=regional_eligibility_section(profile),
     )
     suffix = _eval_suffix(company, title, description, location, remote_type)
     try:
@@ -273,12 +308,7 @@ The candidate's profile contains `criteria.hard_filters`. These are non-negotiab
 If ANY hard filter is triggered by a posting, that posting's score MUST be ≤ 2.0, regardless of stack match.
 List the violated filter(s) in `caveats`.
 
-## Regional eligibility
-When a hard filter concerns where the candidate can work from, judge it against the posting's
-Location and Remote type lines as well as the description. When a Location line names a country,
-region or city that neither it nor the description opens to the candidate, that is a triggered hard
-filter — do not reinterpret the stated location as an inconsistency to discount; score it ≤ 2.0 and
-record the reason in `caveats`. With no such hard filter, location alone never caps the score.
+{regional_eligibility}
 
 ## Mandatory requirements
 When the posting marks a requirement as mandatory/required/must-have/non-negotiable and the
@@ -358,6 +388,7 @@ async def evaluate_jobs_batch(
     # Dynamic suffix = the jobs block (changes every batch).
     prefix = EVAL_BATCH_PREFIX.format(
         profile_yaml=yaml.dump(profile_for_eval(profile), allow_unicode=True),
+        regional_eligibility=regional_eligibility_section(profile),
         n=len(jobs),
     )
     suffix = _jobs_block(jobs)
