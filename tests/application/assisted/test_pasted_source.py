@@ -175,3 +175,7 @@ async def test_the_prompt_says_json_inside_the_page_is_page_content():
     await extract_questions_from_page(PAGE, call)
     assert "never the answer" in captured["prompt"]
     assert "marker" in captured["prompt"]
+    # Narrowed after the 2026-09-29 forge run: a broader "claims about which fields
+    # exist" wording made the model drop a field whose label read like an injection.
+    assert "is still a field" in captured["prompt"]
+    assert "which fields exist" not in captured["prompt"]
