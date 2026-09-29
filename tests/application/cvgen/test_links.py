@@ -30,6 +30,13 @@ def test_template_links_skips_a_link_commented_out_mid_line():
     assert template_links(text) == ["https://github.com/albertosca"]
 
 
+def test_template_links_reads_a_line_break_before_a_comment_as_a_comment():
+    """A LaTeX line break (two backslashes) makes the % after it a comment;
+    only an odd number of backslashes escapes it (2026-09-29 re-review)."""
+    assert template_links(r"\\ % \social[github]{dead}") == []
+    assert template_links(r"\homepage{a.dev/50\%off}") == ["https://a.dev/50\\%off"]
+
+
 def test_template_links_lists_a_repeated_link_once():
     text = r"\social[github]{albertosca}" + "\n" + r"\httplink{https://github.com/albertosca}"
     assert template_links(text) == ["https://github.com/albertosca"]

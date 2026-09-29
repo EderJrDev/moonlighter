@@ -172,24 +172,30 @@ async def test_call_cli_ignores_model_param():
     assert b"claude-opus-99" not in communicate_keyword_arguments["input"]
 
 
-async def test_call_cli_kills_a_subprocess_that_does_not_answer_in_time():
+@pytest.mark.parametrize("group_already_gone", [False, True])
+async def test_call_cli_kills_a_subprocess_that_does_not_answer_in_time(group_already_gone):
     """One `claude -p` call hung for the whole 300 s on a 1,351-character page
-    (llm-tests-forge run, 2026-09-25): nothing ended it but the harness."""
+    (llm-tests-forge run, 2026-09-25): nothing ended it but the harness. The
+    whole process group is killed (see test_llm_process_group.py for the real
+    processes), and a group that exited in the meantime is not an error."""
     import asyncio
+    import signal
 
     async def never_answers(input=None):
         await asyncio.sleep(3600)
 
     mock_process = MagicMock()
+    mock_process.pid = 4242
     mock_process.communicate = never_answers
-    mock_process.kill = MagicMock()
     mock_process.wait = AsyncMock(return_value=-9)
+    killpg = MagicMock(side_effect=ProcessLookupError if group_already_gone else None)
     with (
         patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process),
+        patch("moonlighter.core.llm.os.killpg", killpg),
         pytest.raises(RuntimeError, match=r"did not answer within 0\.05 s"),
     ):
         await _call_cli("prompt", "model", timeout_seconds=0.05)
-    mock_process.kill.assert_called_once()
+    killpg.assert_called_once_with(4242, signal.SIGKILL)
     mock_process.wait.assert_awaited_once()
 
 

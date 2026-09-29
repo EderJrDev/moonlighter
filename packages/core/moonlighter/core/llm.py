@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import os
 import re
 import shutil
+import signal
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
@@ -132,13 +134,17 @@ async def _call_cli(
             stderr=asyncio.subprocess.PIPE,
             env=environment,
             cwd=str(_cli_workdir()),
+            # Its own process group, so a timeout can take down whatever the CLI
+            # started too: killing the direct process alone left a child running
+            # as an orphan (2026-09-29 review).
+            start_new_session=True,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=full.encode()), timeout=timeout_seconds
             )
         except TimeoutError:
-            process.kill()
+            _kill_process_group(process.pid)
             await process.wait()
             raise RuntimeError(
                 f"claude CLI did not answer within {timeout_seconds} s — killed "
@@ -150,6 +156,12 @@ async def _call_cli(
         return stdout.decode()
     finally:
         record_call(perf_counter() - start)
+
+
+def _kill_process_group(pid: int) -> None:
+    # The group may have exited between the timeout and the kill.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGKILL)
 
 
 def make_api_caller(maximum_tokens: int = 2048) -> LLMCaller:

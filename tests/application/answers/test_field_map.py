@@ -78,6 +78,21 @@ def test_a_bare_name_label_is_the_full_name():
         assert answers.get(label) == "Maria de Souza Pereira", f"{label!r} was not filled"
 
 
+def test_a_trailing_colon_or_parenthesised_marker_does_not_hide_a_rule():
+    """2026-09-29 review: "Name:" and "Name (required)" went unmatched while
+    "Name *" matched. The shared label cleaning now drops them too, so every
+    rule gains, not just the name one."""
+    cases = {
+        "Name:": "Maria de Souza Pereira",
+        "Name (required)": "Maria de Souza Pereira",
+        "Email:": "maria.pereira@example.com",
+        "Phone (required)": "11912345678",
+        "Nome completo (obrigatório)": "Maria de Souza Pereira",
+    }
+    for label, expected in cases.items():
+        assert pre_populate_answers([label], PROFILE).get(label) == expected, label
+
+
 def test_a_label_that_merely_starts_with_name_is_left_alone():
     for label in ["Name of your current employer", "Name pronunciation"]:
         assert label not in pre_populate_answers([label], PROFILE)
