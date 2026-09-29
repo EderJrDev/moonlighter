@@ -98,9 +98,9 @@ async def extract_questions_from_page(
         if not label:
             continue
         options = tuple(str(option) for option in item.get("options") or [])
-        if str(item.get("kind")) == QuestionKind.BOOLEAN.value and str(label).rstrip().endswith(
-            "?"
-        ):
+        # The label is copied exactly, so a required marker may trail the "?".
+        is_question = str(label).rstrip(" *†‡").endswith("?")
+        if str(item.get("kind")) == QuestionKind.BOOLEAN.value and is_question:
             item_kind: Any = QuestionKind.SINGLE_SELECT.value
             options = options or _YES_NO
         else:

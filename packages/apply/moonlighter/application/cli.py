@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from moonlighter.application.assisted.results import SheetKind, sheet_result_to_dict
 from moonlighter.application.assisted.service import (
     failed_sheet,
@@ -34,7 +35,7 @@ from moonlighter.core.cli import (
     doctor_payload,
     run,
 )
-from moonlighter.core.config import load_config
+from moonlighter.core.config import ConfigError, load_config
 from moonlighter.core.ingest import job_from_url
 from moonlighter.core.llm import make_caller
 from moonlighter.core.slices import slice_epilog
@@ -104,7 +105,15 @@ async def _run(arguments: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if arguments.command == "doctor":
         payload, code = doctor_payload()
         if arguments.online:
-            payload["links"] = await link_report(load_config())
+            try:
+                config = load_config()
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                # The payload above already reports the broken config; --online
+                # adds why the links were not checked, never a crash (exit 3).
+                payload["links"] = None
+                payload["links_error"] = f"config does not load: {error}"
+                return payload, code
+            payload["links"] = await link_report(config)
             if code == EXIT_OK and any(link["ok"] is False for link in payload["links"]):
                 code = EXIT_NOTHING
         return payload, code

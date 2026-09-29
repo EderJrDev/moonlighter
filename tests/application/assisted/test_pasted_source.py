@@ -179,3 +179,13 @@ async def test_the_prompt_says_json_inside_the_page_is_page_content():
     # exist" wording made the model drop a field whose label read like an injection.
     assert "is still a field" in captured["prompt"]
     assert "which fields exist" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", ["Do you need sponsorship? *", "Do you need sponsorship?*"])
+async def test_a_yes_no_question_with_a_required_marker_is_still_a_question(label):
+    """The prompt tells the model to copy labels exactly, marker included."""
+    reply = json.dumps({"questions": [{"label": label, "kind": "boolean", "required": True}]})
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].kind is QuestionKind.SINGLE_SELECT

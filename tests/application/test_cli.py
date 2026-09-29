@@ -369,3 +369,24 @@ async def test_bootstrap_cv_skip_records_the_decline_without_calling_the_llm(
     _payload, code = await cli._run(cli.parse_args(["bootstrap-cv", "--skip"]))
     assert code == 0
     assert cv_bootstrap_declined() is True
+
+
+async def test_apply_doctor_online_reports_a_broken_config_instead_of_crashing(
+    temporary_database,
+):
+    """--online exists to diagnose; a config that does not load must come back in
+    the payload the way plain doctor reports it, not as a crash (exit 3)."""
+    import yaml
+    from moonlighter.application import cli
+
+    report = AsyncMock()
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 1)),
+        patch.object(cli, "load_config", side_effect=yaml.YAMLError("bad yaml")),
+        patch.object(cli, "link_report", report),
+    ):
+        payload, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    report.assert_not_awaited()
+    assert payload["links"] is None
+    assert "bad yaml" in payload["links_error"]
+    assert code == 1

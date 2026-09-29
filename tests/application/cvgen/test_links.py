@@ -25,6 +25,11 @@ def test_template_links_reads_social_and_http_links_and_skips_comments_and_marke
     ]
 
 
+def test_template_links_skips_a_link_commented_out_mid_line():
+    text = r"\social[github]{albertosca} % \social[github]{dead-old-account}"
+    assert template_links(text) == ["https://github.com/albertosca"]
+
+
 def test_template_links_lists_a_repeated_link_once():
     text = r"\social[github]{albertosca}" + "\n" + r"\httplink{https://github.com/albertosca}"
     assert template_links(text) == ["https://github.com/albertosca"]

@@ -549,14 +549,16 @@ async def add_job(
     url = normalize_job_url(url)
     location: str | None = None
     remote_type: str | None = None
-    if not description or not company or not title:
-        posting = await fetch_posting_via_ats(url)
-        if posting is not None:
-            company = company or posting.company or ""
-            title = title or posting.title or ""
-            description = description or posting.description or ""
-            location = posting.location
-            remote_type = "remote" if posting.remote else normalize_remote_type(location)
+    # Always asked, even when every field was given: the ATS API is where the
+    # structured location comes from, and the evaluator's regional filter needs
+    # it. What the person gave still wins over the API's copy.
+    posting = await fetch_posting_via_ats(url)
+    if posting is not None:
+        company = company or posting.company or ""
+        title = title or posting.title or ""
+        description = description or posting.description or ""
+        location = posting.location
+        remote_type = "remote" if posting.remote else normalize_remote_type(location)
     if not description:
         fetched, error = await fetch_description(url)
         if error:

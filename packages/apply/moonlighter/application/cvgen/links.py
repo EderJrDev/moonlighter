@@ -24,6 +24,7 @@ _SOCIAL_URL = {
 # LinkedIn answers every automated request with this status: it says nothing
 # about whether the profile exists.
 _BOT_WALL_STATUS = 999
+_COMMENT = re.compile(r"(?<!\\)%")
 
 
 def _is_marker(value: str) -> bool:
@@ -35,8 +36,8 @@ def template_links(text: str) -> list[str]:
     lines and unfilled markers ({{LINKEDIN_USERNAME}}) are skipped."""
     links: list[str] = []
     for line in text.splitlines():
-        if line.lstrip().startswith("%"):
-            continue
+        # An unescaped % starts a LaTeX comment, mid-line too.
+        line = _COMMENT.split(line, maxsplit=1)[0]
         found = [
             (match.start(), _SOCIAL_URL[match[1]].format(match[2]))
             for match in _SOCIAL_COMMAND.finditer(line)

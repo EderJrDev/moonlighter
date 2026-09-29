@@ -92,26 +92,38 @@ class AppContext:
     def refresh(self) -> None:
         if self.config_file is not None and self.config_file.changed():
             try:
+                _read_mapping(self.config_file.path)
                 config = load_config(self.config_file.path)
                 validate_config(config)
             except (ConfigError, OSError, yaml.YAMLError) as error:
-                logger.warning(
-                    "config.yaml changed but does not load (%s) — keeping the last good one",
-                    error,
-                )
+                _keep_last_good("config.yaml", error)
             else:
                 self.config = config
                 self.llm_caller = make_caller(config)
         if self.profile_file is not None and self.profile_file.changed():
-            try:
-                self.profile = load_profile(self.profile_file.path)
-            except FileNotFoundError:
+            if not self.profile_file.path.exists():
+                # The server boots with {} when profile.yaml is absent, so a
+                # deletion mid-session means the same thing.
                 self.profile = {}
-            except (OSError, yaml.YAMLError) as error:
-                logger.warning(
-                    "profile.yaml changed but does not load (%s) — keeping the last good one",
-                    error,
-                )
+                return
+            try:
+                self.profile = _read_mapping(self.profile_file.path)
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                _keep_last_good("profile.yaml", error)
+
+
+def _read_mapping(path: Path) -> dict[str, Any]:
+    """The file's YAML mapping, or an error for anything else. An empty file is an
+    error too: an editor that truncates before writing leaves one for a moment, and
+    a tool call must not run on defaults in between (2026-09-29 review)."""
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict) or not data:
+        raise ConfigError(f"{path.name} is not a non-empty YAML mapping")
+    return data
+
+
+def _keep_last_good(name: str, error: Exception) -> None:
+    logger.warning("%s changed but does not load (%s) — keeping the last good one", name, error)
 
 
 def _app(context: Context[AppContext, Any]) -> AppContext:

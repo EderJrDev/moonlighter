@@ -44,7 +44,7 @@ async def find_stale_jobs(
     # optionally provided by a private plugin package -- see
     # docs/superpowers/specs/2026-07-22-linkedin-plugin-split-design.md. Never
     # hardcoded here: a source with no registered listing check AND no registered
-    # checker plugin falls through to the "has no listing check" branch below.
+    # checker plugin lands in result.unverifiable, for a person to confirm by hand.
     checkers = discover_entry_points_by_name("moonlighter.staleness_checkers")
     portal_counts: dict[str, int] = {}
     for (source, company), jobs in jobs_by_company.items():

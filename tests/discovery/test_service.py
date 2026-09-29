@@ -211,6 +211,32 @@ async def test_add_job_hands_the_ats_location_to_the_evaluator(temporary_databas
     assert job.location == "Bangalore, India"
 
 
+async def test_add_job_takes_the_ats_location_even_when_every_field_was_given(
+    temporary_database,
+):
+    """With company, title and description all pasted, the ATS lookup used to be
+    skipped, and the evaluator ran with no location — the gap this branch closes."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab", title="Engineer", description="API text.", location="Bangalore, India"
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792004"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            url, "GitLab", "Engineer", "Pasted text.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    # What the person pasted still wins over the API's copy.
+    assert eval_mock.call_args.kwargs["description"] == "Pasted text."
+
+
 async def test_add_job_marks_a_remote_ats_posting_remote(temporary_database):
     init_db()
     posting = FetchedPosting(

@@ -156,6 +156,8 @@ async def test_an_invalid_config_edit_keeps_the_last_good_one_and_warns(
 
 
 async def test_a_deleted_profile_becomes_empty(temporary_database, monkeypatch, tmp_path):
+    """Unlike a deleted config, a deleted profile is a legitimate state: the server
+    boots with {} when profile.yaml is absent, so a deletion mid-session means the same."""
     import moonlighter.server as server
 
     monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
@@ -179,3 +181,46 @@ async def test_a_malformed_profile_edit_keeps_the_last_good_one_and_warns(
         app = server._app(_context_for(app_context))
     assert app.profile["headline"] == "Before"
     assert "profile.yaml" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("file_name", "bad_text"),
+    [
+        ("config.yaml", "- a\n- list\n"),
+        ("config.yaml", ""),
+        ("profile.yaml", "just a string\n"),
+        ("profile.yaml", "- x\n"),
+        ("profile.yaml", ""),
+    ],
+)
+async def test_an_edit_that_is_not_a_mapping_keeps_the_last_good_file(
+    temporary_database, monkeypatch, tmp_path, caplog, file_name, bad_text
+):
+    """A list, a scalar, or an empty file (an editor that truncates, then writes)
+    must not replace the settings: one tool call on defaults mid-write is the
+    2026-09-25 class of bug."""
+    import moonlighter.server as server
+
+    monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
+    _write(tmp_path / "config.yaml", "score_threshold: 8.0\n")
+    _write(tmp_path / "profile.yaml", "headline: Before\n")
+    async with server.lifespan(server.mcp) as app_context:
+        _write(tmp_path / file_name, bad_text, later_than=tmp_path / file_name)
+        app = server._app(_context_for(app_context))
+    assert app.config["score_threshold"] == 8.0
+    assert app.profile == {"headline": "Before"}
+    assert file_name in caplog.text
+
+
+async def test_a_deleted_config_keeps_the_last_good_one(
+    temporary_database, monkeypatch, tmp_path, caplog
+):
+    import moonlighter.server as server
+
+    monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
+    _write(tmp_path / "config.yaml", "score_threshold: 8.0\n")
+    async with server.lifespan(server.mcp) as app_context:
+        (tmp_path / "config.yaml").unlink()
+        app = server._app(_context_for(app_context))
+    assert app.config["score_threshold"] == 8.0
+    assert "config.yaml" in caplog.text
