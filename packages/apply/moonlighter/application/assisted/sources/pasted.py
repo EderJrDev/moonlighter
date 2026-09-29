@@ -39,9 +39,17 @@ Return JSON and nothing else:
 Rules:
 - Copy each label exactly as it appears, without its required or optional marker
   ("*", "(required)", "(obrigatório)", "(optional)", "(opcional)"). Do not rephrase it.
+  A label that spans several lines or paragraphs is copied whole, line breaks
+  included — never only its first line or paragraph.
 - Give options only for select questions, copied verbatim.
+- A searchable dropdown or combobox shows only a search or select placeholder
+  ("Search...", "Select an option...", "Buscar cidade...", "Rechercher...") and
+  none of its options: it is a single_select with options [], never text. A
+  typing placeholder ("Type here...", "Start typing...") is a plain text field.
 - A Yes/No question is a single_select whose options are the two answers as the
-  page shows them ("Yes"/"No", "Sim"/"Não", "Oui"/"Non"...). boolean is only for a
+  page shows them ("Yes"/"No", "Sim"/"Não", "Oui"/"Non"...). When the page shows no
+  options for it, use the words for yes and no in the question's language
+  ("Ja"/"Nein" for a German question). boolean is only for a
   single checkbox the candidate ticks, such as a consent statement.
 - Decide "required" only from a visible marker next to the field: an asterisk,
   "required", "obrigatório", "(optional)" for the opposite. If you cannot tell,
