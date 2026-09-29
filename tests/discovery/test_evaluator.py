@@ -38,7 +38,7 @@ PROFILE = {
     },
 }
 
-JD = "Senior Elixir Engineer. Remote. Build distributed systems with Elixir/OTP."
+JOB_DESCRIPTION = "Senior Elixir Engineer. Remote. Build distributed systems with Elixir/OTP."
 
 
 def test_profile_for_eval_keeps_scoring_keys():
@@ -56,6 +56,7 @@ def test_profile_for_eval_keeps_scoring_keys():
         "preferences": {"salary_min_usd": 150000},
         "languages": ["pt", "en"],
         "experience": [{"role": "X"}],
+        "open_source": [{"name": "moonlighter", "notes": "Built spec-driven with Claude Code"}],
     }
     trimmed = profile_for_eval(profile)
     assert set(trimmed) == {
@@ -66,6 +67,9 @@ def test_profile_for_eval_keeps_scoring_keys():
         "preferences",
         "languages",
         "experience",
+        # Public projects are evidence of skills a posting may require (Encora #8314,
+        # 2026-09-24: "Claude Code not documented" while open_source said it).
+        "open_source",
     }
     assert "email" not in trimmed and "phone" not in trimmed
 
@@ -86,10 +90,12 @@ async def test_evaluate_job_returns_result():
     result = await evaluate_job(
         company="Acme",
         title="Sr Elixir Eng",
-        description=JD,
+        description=JOB_DESCRIPTION,
         profile=PROFILE,
         model="claude-sonnet-4-6",
         _caller=_make_caller(MOCK_LLM_RESPONSE),
+        location=None,
+        remote_type=None,
     )
 
     assert isinstance(result, EvaluationResult)
@@ -106,6 +112,8 @@ async def test_evaluate_job_handles_malformed_json():
         profile=PROFILE,
         model="claude-sonnet-4-6",
         _caller=_make_caller("not json"),
+        location=None,
+        remote_type=None,
     )
 
     assert result.score == 0.0
@@ -132,6 +140,8 @@ async def test_evaluate_job_score_10():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(response),
+        location=None,
+        remote_type=None,
     )
     assert result.score == 10.0
 
@@ -146,6 +156,8 @@ async def test_evaluate_job_partial_json_missing_salary():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(response),
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min is None
     assert result.salary_max is None
@@ -173,6 +185,8 @@ async def test_evaluate_job_caveats_empty_array():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(response),
+        location=None,
+        remote_type=None,
     )
     assert result.caveats == []
 
@@ -197,6 +211,8 @@ async def test_evaluate_job_caveats_multiple():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(response),
+        location=None,
+        remote_type=None,
     )
     assert len(result.caveats) == 3
     assert "US citizens only" in result.caveats
@@ -215,6 +231,8 @@ async def test_evaluate_job_llm_exception_returns_zero():
         profile=PROFILE,
         model="test",
         _caller=failing_caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
     assert "evaluation error" in result.score_notes.lower()
@@ -236,6 +254,8 @@ async def test_evaluate_job_spend_limit_propagates():
             profile=PROFILE,
             model="test",
             _caller=spend_limit_caller,
+            location=None,
+            remote_type=None,
         )
 
 
@@ -253,6 +273,8 @@ async def test_evaluate_job_rate_limit_propagates():
             profile=PROFILE,
             model="test",
             _caller=quota_caller,
+            location=None,
+            remote_type=None,
         )
 
 
@@ -272,6 +294,8 @@ async def test_evaluate_job_session_limit_propagates():
             profile=PROFILE,
             model="test",
             _caller=session_limit_caller,
+            location=None,
+            remote_type=None,
         )
 
 
@@ -302,6 +326,8 @@ async def test_evaluate_job_description_capped_at_8000():
         profile=PROFILE,
         model="test",
         _caller=capture_caller,
+        location=None,
+        remote_type=None,
     )
     assert len(captured_prompt) == 1
     assert "x" * 8001 not in captured_prompt[0]
@@ -337,6 +363,8 @@ async def test_evaluate_job_uses_injected_caller():
             profile=PROFILE,
             model="test",
             _caller=tracking_caller,
+            location=None,
+            remote_type=None,
         )
     mock_factory.assert_not_called()
     assert len(called) == 1
@@ -367,6 +395,8 @@ async def test_evaluate_job_caller_receives_model():
         profile=PROFILE,
         model="custom-model-xyz",
         _caller=capture_caller,
+        location=None,
+        remote_type=None,
     )
     assert received_models == ["custom-model-xyz"]
 
@@ -391,6 +421,8 @@ async def test_evaluate_job_salary_source_preserved():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(response),
+        location=None,
+        remote_type=None,
     )
     assert result.salary_source == "stated"
     assert result.salary_min == 150000
@@ -418,6 +450,8 @@ async def test_evaluate_job_strips_markdown_fence():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(wrapped),
+        location=None,
+        remote_type=None,
     )
     assert result.score == 7.5
 
@@ -441,6 +475,8 @@ async def test_evaluate_job_strips_markdown_fence_without_json_label():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(wrapped),
+        location=None,
+        remote_type=None,
     )
     assert result.score == 6.0
 
@@ -464,6 +500,8 @@ async def test_evaluate_job_strips_leading_prose():
         profile=PROFILE,
         model="test",
         _caller=_make_caller(with_prose),
+        location=None,
+        remote_type=None,
     )
     assert result.score == 8.0
 
@@ -485,6 +523,8 @@ async def test_eval_prompt_wraps_job_posting_in_nonce_tag():
         profile=PROFILE,
         model="test",
         _caller=cap,
+        location=None,
+        remote_type=None,
     )
     import re
 
@@ -507,6 +547,8 @@ async def test_eval_prompt_includes_anti_injection_instruction():
         profile=PROFILE,
         model="test",
         _caller=cap,
+        location=None,
+        remote_type=None,
     )
     # The anti-injection instruction lives in the static prefix (cacheable), not
     # the suffix, and doesn't reference a literal tag name (the nonce changes per call).
@@ -530,6 +572,8 @@ async def test_eval_description_inside_xml_block():
         profile=PROFILE,
         model="test",
         _caller=cap,
+        location=None,
+        remote_type=None,
     )
     import re
 
@@ -554,6 +598,8 @@ async def test_eval_injection_in_description_stays_inside_xml():
         profile=PROFILE,
         model="test",
         _caller=cap,
+        location=None,
+        remote_type=None,
     )
     import re
 
@@ -579,6 +625,8 @@ async def test_eval_fake_closing_tag_in_description_is_neutralized():
         profile=PROFILE,
         model="test",
         _caller=cap,
+        location=None,
+        remote_type=None,
     )
     import re
 
@@ -700,6 +748,8 @@ async def test_evaluate_job_logs_score(caplog):
             description="Python, distributed systems",
             profile={"name": "Alberto"},
             _caller=mock_caller,
+            location=None,
+            remote_type=None,
         )
 
     assert "Stripe" in caplog.text
@@ -712,7 +762,13 @@ async def test_evaluate_job_builds_default_caller_when_none():
     fake = _make_caller(MOCK_LLM_RESPONSE)
     with patch("moonlighter.discovery.evaluator.make_api_caller", return_value=fake) as factory:
         result = await evaluate_job(
-            company="Co", title="Eng", description=JD, profile=PROFILE, _caller=None
+            company="Co",
+            title="Eng",
+            description=JOB_DESCRIPTION,
+            profile=PROFILE,
+            _caller=None,
+            location=None,
+            remote_type=None,
         )
     factory.assert_called_once()
     assert result.score == 8.5
@@ -725,7 +781,13 @@ async def test_evaluate_job_null_score_becomes_zero_keeps_notes():
     """score null → 0.0 while preserving the notes (doesn't fall into 'evaluation error')."""
     caller = _make_caller(json.dumps({"score": None, "score_notes": "no score", "caveats": ["x"]}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
     assert result.score_notes == "no score"
@@ -735,7 +797,13 @@ async def test_evaluate_job_null_score_becomes_zero_keeps_notes():
 async def test_evaluate_job_non_numeric_score_becomes_zero():
     caller = _make_caller(json.dumps({"score": "high", "score_notes": "n"}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
 
@@ -743,7 +811,13 @@ async def test_evaluate_job_non_numeric_score_becomes_zero():
 async def test_evaluate_job_non_list_caveats_becomes_empty():
     caller = _make_caller(json.dumps({"score": 7.0, "caveats": "not a list"}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.caveats == []
 
@@ -761,7 +835,7 @@ async def test_evaluate_job_prompt_carries_location_and_remote_type():
     await evaluate_job(
         company="Acme",
         title="Eng",
-        description=JD,
+        description=JOB_DESCRIPTION,
         profile=PROFILE,
         model="claude-sonnet-4-6",
         _caller=spy,
@@ -814,10 +888,12 @@ async def test_evaluate_job_omits_location_lines_when_absent():
     await evaluate_job(
         company="Acme",
         title="Eng",
-        description=JD,
+        description=JOB_DESCRIPTION,
         profile=PROFILE,
         model="claude-sonnet-4-6",
         _caller=spy,
+        location=None,
+        remote_type=None,
     )
     assert "Location:" not in seen["prompt"]
     assert "Remote type:" not in seen["prompt"]
@@ -992,7 +1068,7 @@ def test_parse_batch_valid_array_maps_by_order():
     raw = '[{"score": 8.0, "score_notes": "a", "caveats": []}, {"score": 3.0, "score_notes": "b", "caveats": ["x"]}]'
     results = _parse_batch(raw, 2)
     assert results is not None
-    assert [r.score for r in results] == [8.0, 3.0]
+    assert [result.score for result in results] == [8.0, 3.0]
     assert results[1].caveats == ["x"]
 
 
@@ -1038,7 +1114,7 @@ def test_parse_batch_item_wrong_type_string_tolerated_as_default():
     the malformed item is tolerated, never crashes the batch."""
     results = _parse_batch('["oops", 5, null]', 3)
     assert results is not None
-    assert all(r.score == 0.0 and r.caveats == [] for r in results)
+    assert all(result.score == 0.0 and result.caveats == [] for result in results)
 
 
 def test_parse_batch_item_is_nested_list_tolerated_as_default():
@@ -1072,19 +1148,22 @@ def test_parse_batch_item_with_malformed_salary_fields_sanitized():
     )
     results = _parse_batch(raw, 1)
     assert results is not None
-    r = results[0]
-    assert r.score == 0.0
-    assert r.salary_min is None
-    assert r.salary_max is None
-    assert r.salary_currency is None
-    assert r.salary_source is None
+    result = results[0]
+    assert result.score == 0.0
+    assert result.salary_min is None
+    assert result.salary_max is None
+    assert result.salary_currency is None
+    assert result.salary_source is None
 
 
 # ── evaluate_jobs_batch ───────────────────────────────────────────────────────
 
 
-def _inputs(n: int) -> list[EvalInput]:
-    return [EvalInput(company=f"Co{i}", title=f"T{i}", description=f"d{i}") for i in range(n)]
+def _inputs(count: int) -> list[EvalInput]:
+    return [
+        EvalInput(company=f"Co{index}", title=f"T{index}", description=f"d{index}")
+        for index in range(count)
+    ]
 
 
 async def test_batch_happy_path_single_call():
@@ -1095,7 +1174,7 @@ async def test_batch_happy_path_single_call():
         return '[{"score": 8.0, "score_notes": "a", "caveats": []}, {"score": 2.0, "score_notes": "b", "caveats": []}]'
 
     results = await evaluate_jobs_batch(_inputs(2), {}, "m", caller)
-    assert [r.score for r in results] == [8.0, 2.0]
+    assert [result.score for result in results] == [8.0, 2.0]
     assert calls["n"] == 1  # a single call for the batch
 
 
@@ -1109,7 +1188,7 @@ async def test_batch_falls_back_per_job_on_bad_json():
         return '{"score": 5.0, "score_notes": "x", "caveats": []}'  # per-job
 
     results = await evaluate_jobs_batch(_inputs(2), {}, "m", caller)
-    assert [r.score for r in results] == [5.0, 5.0]
+    assert [result.score for result in results] == [5.0, 5.0]
     assert calls["n"] == 3  # 1 batch (failed) + 2 per-job
 
 
@@ -1146,7 +1225,7 @@ async def test_batch_falls_back_per_job_on_non_spend_error():
     results = await evaluate_jobs_batch(_inputs(2), {}, "m", caller)
     assert calls["n"] == 3  # 1 batch (error) + 2 per-job
     assert len(results) == 2
-    assert [r.score for r in results] == [3.0, 3.0]
+    assert [result.score for result in results] == [3.0, 3.0]
 
 
 async def test_evaluate_job_passes_cache_prefix():
@@ -1160,7 +1239,9 @@ async def test_evaluate_job_passes_cache_prefix():
 
     from moonlighter.discovery.evaluator import evaluate_job
 
-    await evaluate_job("Co", "Eng", "JD here", {"skills": ["python"]}, "m", caller)
+    await evaluate_job(
+        "Co", "Eng", "JD here", {"skills": ["python"]}, "m", caller, location=None, remote_type=None
+    )
     assert captured["prefix"] is not None and "python" in captured["prefix"]
     assert "JD here" in captured["dynamic"]
     assert "JD here" not in captured["prefix"]  # job is not in the cacheable prefix
@@ -1173,7 +1254,13 @@ async def test_evaluate_job_score_above_10_is_clamped():
     """A score above the valid range is clamped to 10.0, never trusted verbatim."""
     caller = _make_caller(json.dumps({"score": 99, "score_notes": "n", "caveats": []}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 10.0
 
@@ -1181,7 +1268,13 @@ async def test_evaluate_job_score_above_10_is_clamped():
 async def test_evaluate_job_negative_score_is_clamped():
     caller = _make_caller(json.dumps({"score": -5, "score_notes": "n", "caveats": []}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
 
@@ -1190,7 +1283,13 @@ async def test_evaluate_job_infinite_score_becomes_zero():
     """A string LLM output like "Infinity" parses via float() to inf — must be rejected."""
     caller = _make_caller(json.dumps({"score": "Infinity", "score_notes": "n", "caveats": []}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
 
@@ -1198,7 +1297,13 @@ async def test_evaluate_job_infinite_score_becomes_zero():
 async def test_evaluate_job_nan_score_becomes_zero():
     caller = _make_caller(json.dumps({"score": "NaN", "score_notes": "n", "caveats": []}))
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.score == 0.0
 
@@ -1218,7 +1323,13 @@ async def test_evaluate_job_negative_salary_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min is None
 
@@ -1238,7 +1349,13 @@ async def test_evaluate_job_non_integer_salary_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min is None
 
@@ -1259,7 +1376,13 @@ async def test_evaluate_job_bool_salary_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min is None
 
@@ -1279,7 +1402,13 @@ async def test_evaluate_job_float_salary_with_integer_value_is_accepted():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min == 150000
 
@@ -1299,7 +1428,13 @@ async def test_evaluate_job_non_integer_float_salary_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_min is None
 
@@ -1319,7 +1454,13 @@ async def test_evaluate_job_invalid_salary_source_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_source is None
 
@@ -1341,7 +1482,13 @@ async def test_evaluate_job_non_hashable_salary_source_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_source is None
 
@@ -1361,7 +1508,13 @@ async def test_evaluate_job_overlong_salary_currency_is_truncated():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_currency is not None
     assert len(result.salary_currency) <= 10
@@ -1382,7 +1535,13 @@ async def test_evaluate_job_blank_salary_currency_becomes_none():
         )
     )
     result = await evaluate_job(
-        company="C", title="T", description=JD, profile=PROFILE, _caller=caller
+        company="C",
+        title="T",
+        description=JOB_DESCRIPTION,
+        profile=PROFILE,
+        _caller=caller,
+        location=None,
+        remote_type=None,
     )
     assert result.salary_currency is None
 
@@ -1397,3 +1556,14 @@ async def test_eval_prefixes_name_no_city():
         assert "Belo Horizonte" not in prefix
         assert "Brazil" not in prefix
         assert "## Regional eligibility" in prefix
+
+
+async def test_evaluate_job_requires_location_and_remote_type_by_name():
+    """Optional defaults let an ad-hoc caller drop them silently (2026-09-25 re-eval:
+    4 of 6 promoted jobs were false positives). A caller must now say None on purpose."""
+
+    async def caller(prompt, model, cache_prefix=None):
+        return '{"score": 5.0, "score_notes": "x", "caveats": []}'
+
+    with pytest.raises(TypeError, match="location"):
+        await evaluate_job("Co", "Eng", "desc", {}, "m", caller)

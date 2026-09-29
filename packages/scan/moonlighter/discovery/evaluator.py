@@ -13,7 +13,8 @@ logger = get_logger(__name__)
 
 # Profile fields that matter for SCORING a job. Contact/credentials
 # (name/phone/email/linkedin) and education/publications don't influence the score
-# and only bloat the prompt — left out.
+# and only bloat the prompt — left out. `open_source` stays in: public projects are
+# evidence for requirements the experience list may not name (Encora, 2026-09-24).
 _EVAL_PROFILE_KEYS = (
     "criteria",
     "skills",
@@ -22,13 +23,14 @@ _EVAL_PROFILE_KEYS = (
     "preferences",
     "languages",
     "experience",
+    "open_source",
 )
 
 
 def profile_for_eval(profile: dict[str, Any]) -> dict[str, Any]:
     """Subset of the profile relevant to evaluation. Reduces tokens per call
     without losing the dealbreakers (criteria) or the match context (skills/experience)."""
-    return {k: profile[k] for k in _EVAL_PROFILE_KEYS if k in profile}
+    return {key: profile[key] for key in _EVAL_PROFILE_KEYS if key in profile}
 
 
 def should_skip_by_title(title: str, blocklist: list[str]) -> str | None:
@@ -154,8 +156,12 @@ async def evaluate_job(
     profile: dict[str, Any],
     model: str = "claude-sonnet-4-6",
     _caller: LLMCaller | None = None,
-    location: str | None = None,
-    remote_type: str | None = None,
+    *,
+    # Required on purpose, even as None: an optional default let an ad-hoc caller
+    # drop them silently and the regional filter degraded to the description
+    # alone (2026-09-25 re-eval: 4 of 6 promoted jobs were false positives).
+    location: str | None,
+    remote_type: str | None,
 ) -> EvaluationResult:
     if _caller is None:
         _caller = make_api_caller()
@@ -173,12 +179,12 @@ async def evaluate_job(
     except json.JSONDecodeError:
         logger.warning("evaluator: parse error for %s/%s", company, title, exc_info=True)
         return EvaluationResult(score=0.0, score_notes="parse error: LLM returned non-JSON")
-    except Exception as e:
-        if is_spend_limit(e):
+    except Exception as error:
+        if is_spend_limit(error):
             record_spend_limit_hit()
             raise  # quota exhausted — the caller decides to stop; not the job's fault
-        logger.warning("evaluator: error for %s/%s — %s", company, title, e, exc_info=True)
-        return EvaluationResult(score=0.0, score_notes=f"evaluation error: {e}")
+        logger.warning("evaluator: error for %s/%s — %s", company, title, error, exc_info=True)
+        return EvaluationResult(score=0.0, score_notes=f"evaluation error: {error}")
 
 
 def _result_from(data: dict[str, Any]) -> EvaluationResult:
@@ -238,9 +244,9 @@ def _as_salary_source(value: Any) -> str | None:
     return value if isinstance(value, str) and value in _VALID_SALARY_SOURCES else None
 
 
-def _parse_batch(raw: str, n: int) -> list[EvaluationResult] | None:
-    """Parses the batch response into an array of n EvaluationResult. Returns None
-    when the STRUCTURE is invalid (not a list or size ≠ n) — the caller then falls
+def _parse_batch(raw: str, expected_count: int) -> list[EvaluationResult] | None:
+    """Parses the batch response into an array of expected_count EvaluationResult. Returns None
+    when the STRUCTURE is invalid (not a list or size ≠ expected_count) — the caller then falls
     back to the per-job path. A malformed individual item is tolerated via _result_from."""
     try:
         # Tries direct parsing (bare arrays); if that fails, tries extracting JSON from markdown/prose
@@ -250,7 +256,7 @@ def _parse_batch(raw: str, n: int) -> list[EvaluationResult] | None:
             data = parse_llm_json(raw)
     except json.JSONDecodeError:
         return None
-    if not isinstance(data, list) or len(data) != n:
+    if not isinstance(data, list) or len(data) != expected_count:
         return None
     return [_result_from(item if isinstance(item, dict) else {}) for item in data]
 
@@ -314,9 +320,9 @@ def _jobs_block(jobs: list[EvalInput]) -> str:
     """Formats the job list as nonce-tagged blocks (one per index) for the
     batch prompt — each posting isolated in its own delimiter (S-04)."""
     parts = []
-    for i, job in enumerate(jobs):
+    for index, job in enumerate(jobs):
         body = _posting_body(job.company, job.title, job.description, job.location, job.remote_type)
-        parts.append(wrap_untrusted(f"job_posting_{i}", body, cap=8000))
+        parts.append(wrap_untrusted(f"job_posting_{index}", body, cap=8000))
     return "\n".join(parts)
 
 
@@ -326,16 +332,16 @@ async def _eval_each(
     """Fallback: evaluates job by job (sequentially). A spend-limit in any of them propagates."""
     return [
         await evaluate_job(
-            j.company,
-            j.title,
-            j.description,
+            job.company,
+            job.title,
+            job.description,
             profile,
             model,
             caller,
-            location=j.location,
-            remote_type=j.remote_type,
+            location=job.location,
+            remote_type=job.remote_type,
         )
-        for j in jobs
+        for job in jobs
     ]
 
 
@@ -357,11 +363,11 @@ async def evaluate_jobs_batch(
     suffix = _jobs_block(jobs)
     try:
         raw = await caller(suffix, model, cache_prefix=prefix)
-    except Exception as e:
-        if is_spend_limit(e):
+    except Exception as error:
+        if is_spend_limit(error):
             record_spend_limit_hit()
             raise
-        logger.warning("batch eval: call error — fallback per-job: %s", e, exc_info=True)
+        logger.warning("batch eval: call error — fallback per-job: %s", error, exc_info=True)
         return await _eval_each(jobs, profile, model, caller)
 
     parsed = _parse_batch(raw, len(jobs))

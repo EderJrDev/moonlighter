@@ -184,6 +184,55 @@ async def test_add_job_routes_through_ats_when_fields_missing(temporary_database
     assert job.description == "Build things."
 
 
+async def test_add_job_hands_the_ats_location_to_the_evaluator(temporary_database):
+    """Without the structured location the LLM judges eligibility from the text alone —
+    the 2026-08-21 gitlab false-positive class, reintroduced by any caller that omits it."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab",
+        title="Account Executive",
+        description="Build things.",
+        location="Bangalore, India",
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792003"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(url, "", "", "", CONFIG, PROFILE, MagicMock())
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] is None
+    job = Job.get(Job.url == url)
+    assert job.location == "Bangalore, India"
+
+
+async def test_add_job_marks_a_remote_ats_posting_remote(temporary_database):
+    init_db()
+    posting = FetchedPosting(
+        company="Channable",
+        title="Backend Engineer",
+        description="Elixir.",
+        location="Utrecht",
+        remote=True,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            "https://jobs.channable.com/o/backend", "", "", "", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["remote_type"] == "remote"
+
+
 async def test_add_job_http_non_200_returns_error(temporary_database):
     init_db()
     acm, _ = _http_client(status_code=404)
@@ -374,6 +423,27 @@ async def test_verify_job_rejects_a_too_short_paste_and_leaves_job_pending(tempo
     assert "0 chars" in result
     assert "stays pending" in result
     assert Job.get_by_id(job.id).status == "needs_review"
+
+
+async def test_verify_job_hands_the_stored_location_to_the_evaluator(temporary_database):
+    init_db()
+    job = Job.create(
+        source="greenhouse",
+        company="GitLab",
+        title="Engineer",
+        url="https://x.com/vj/location",
+        location="Bangalore, India",
+        remote_type="onsite",
+        status="needs_review",
+        score=None,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with patch("moonlighter.discovery.service.evaluate_job", new=eval_mock):
+        await scan_service.verify_job(
+            job.id, "Full page text with the real job description.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] == "onsite"
 
 
 async def test_verify_job_updates_the_same_row_and_scores_above_threshold(temporary_database):

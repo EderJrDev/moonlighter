@@ -131,6 +131,8 @@ async def test_evaluate_10_jobs_concurrent_faster_than_sequential():
                 profile=profile,
                 model="test",
                 _caller=slow_caller,
+                location=None,
+                remote_type=None,
             )
             for company, title, description in jobs
         ]
@@ -147,6 +149,8 @@ async def test_evaluate_10_jobs_concurrent_faster_than_sequential():
             profile=profile,
             model="test",
             _caller=slow_caller,
+            location=None,
+            remote_type=None,
         )
     sequential_elapsed = time.perf_counter() - start_time
 
@@ -197,6 +201,8 @@ async def test_evaluate_batch_size_10_processes_all():
                     profile=profile,
                     model="test",
                     _caller=fast_caller,
+                    location=None,
+                    remote_type=None,
                 )
                 for company, title, description in batch
             ]
