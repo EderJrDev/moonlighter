@@ -138,9 +138,20 @@ async def test_the_prompt_fixes_one_shape_for_yes_no_questions():
     pins the answer to an offered option and the sheet shows the one not chosen."""
     call, captured = fake_llm(json.dumps({"questions": []}))
     await extract_questions_from_page(PAGE, call)
-    assert "Yes/No" in captured["prompt"]
+    assert "Yes/No question" in captured["prompt"]
     assert "single_select" in captured["prompt"]
-    assert "|boolean" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_consent_checkbox_stays_boolean():
+    """A statement to tick ("I agree to the processing of my personal data") is
+    not a Yes/No question: it keeps the boolean kind, with no invented options."""
+    label = "I agree to the processing of my personal data."
+    reply = json.dumps({"questions": [{"label": label, "kind": "boolean", "required": True}]})
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].kind is QuestionKind.BOOLEAN
+    assert questions[0].options == ()
 
 
 @pytest.mark.asyncio

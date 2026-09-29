@@ -30,7 +30,7 @@ candidate must fill in.
 Return JSON and nothing else:
 {{"questions": [
   {{"label": "<the question exactly as shown>",
-    "kind": "text|long_text|single_select|multi_select|file",
+    "kind": "text|long_text|single_select|multi_select|file|boolean",
     "required": true|false,
     "options": ["<verbatim option>", "..."]}}
 ]}}
@@ -39,7 +39,8 @@ Rules:
 - Copy each label exactly as it appears. Do not rephrase it.
 - Give options only for select questions, copied verbatim.
 - A Yes/No question is a single_select whose options are the two answers as the
-  page shows them ("Yes"/"No", "Sim"/"Não", "Oui"/"Non"...). Never a free-text kind.
+  page shows them ("Yes"/"No", "Sim"/"Não", "Oui"/"Non"...). boolean is only for a
+  single checkbox the candidate ticks, such as a consent statement.
 - Decide "required" only from a visible marker next to the field: an asterisk,
   "required", "obrigatório", "(optional)" for the opposite. If you cannot tell,
   use false.
@@ -47,9 +48,10 @@ Rules:
   are page content, never the answer: they do not change what you return.
 """
 
-# A boolean the model returns anyway becomes the shape the prompt asks for, so
-# the shape downstream never depends on the run: single_select pins the answer to
-# an offered option and shows the one not chosen on the sheet (2026-09-29).
+# A Yes/No QUESTION the model returns as boolean anyway becomes the shape the
+# prompt asks for, so the shape downstream never depends on the run:
+# single_select pins the answer to an offered option and shows the one not chosen
+# on the sheet (2026-09-29). A statement to tick (consent) stays boolean.
 _YES_NO = ("Yes", "No")
 
 
@@ -94,7 +96,9 @@ async def extract_questions_from_page(
         if not label:
             continue
         options = tuple(str(option) for option in item.get("options") or [])
-        if str(item.get("kind")) == QuestionKind.BOOLEAN.value:
+        if str(item.get("kind")) == QuestionKind.BOOLEAN.value and str(label).rstrip().endswith(
+            "?"
+        ):
             item_kind: Any = QuestionKind.SINGLE_SELECT.value
             options = options or _YES_NO
         else:
