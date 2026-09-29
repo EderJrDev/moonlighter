@@ -1,11 +1,12 @@
 import contextlib
 import sys
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 from mcp.server.mcpserver import Context, MCPServer
 from moonlighter._tool_logging import tool_logged
 from moonlighter.application.answers.answer_bank import (
@@ -22,15 +23,18 @@ from moonlighter.application.cvgen.bootstrap import bootstrap_cv_pool as bootstr
 from moonlighter.application.cvgen.compile import latex_available
 from moonlighter.core.config import (
     DEFAULTS,
+    ConfigError,
     harden_permissions,
     load_company_list,
     load_config,
     load_profile,
+    moonlighter_home,
     resolve_under_home,
     validate_config,
 )
 from moonlighter.core.db import Application, Job, init_db, sync_job_status
 from moonlighter.core.llm import LLMCaller, make_caller
+from moonlighter.core.log import get_logger
 from moonlighter.core.log import setup as _setup_logging
 from moonlighter.core.metrics import operation_metrics
 from moonlighter.core.parsing import wrap_untrusted
@@ -43,8 +47,34 @@ from moonlighter.tracking.email_monitor import sync_responses
 from moonlighter.tracking.gmail_client import GmailAuthError, run_gmail_oauth, setup_gmail_service
 from moonlighter.views import render_jobs_table
 
+logger = get_logger(__name__)
 
-@dataclass(frozen=True)
+
+def _modified_at(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+@dataclass
+class _WatchedFile:
+    path: Path
+    modified_at: int | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.modified_at = _modified_at(self.path)
+
+    def changed(self) -> bool:
+        """True once per edit: the new modification time is recorded as read."""
+        current = _modified_at(self.path)
+        if current == self.modified_at:
+            return False
+        self.modified_at = current
+        return True
+
+
+@dataclass
 class AppContext:
     config: dict[str, Any]
     profile: dict[str, Any]
@@ -52,6 +82,43 @@ class AppContext:
     llm_caller: LLMCaller
     startup_warnings: list[StartupWarning]
     permission_warnings: list[str]
+    # Set by the lifespan only. config.yaml and profile.yaml used to be read once,
+    # at connect time: on 2026-09-25 a config flag added mid-session was silently
+    # ignored, and sync_email_responses marked 11 messages processed without
+    # archiving them. A tool call now re-reads whichever file changed.
+    config_file: _WatchedFile | None = None
+    profile_file: _WatchedFile | None = None
+
+    def refresh(self) -> None:
+        if self.config_file is not None and self.config_file.changed():
+            try:
+                config = load_config(self.config_file.path)
+                validate_config(config)
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                logger.warning(
+                    "config.yaml changed but does not load (%s) — keeping the last good one",
+                    error,
+                )
+            else:
+                self.config = config
+                self.llm_caller = make_caller(config)
+        if self.profile_file is not None and self.profile_file.changed():
+            try:
+                self.profile = load_profile(self.profile_file.path)
+            except FileNotFoundError:
+                self.profile = {}
+            except (OSError, yaml.YAMLError) as error:
+                logger.warning(
+                    "profile.yaml changed but does not load (%s) — keeping the last good one",
+                    error,
+                )
+
+
+def _app(context: Context[AppContext, Any]) -> AppContext:
+    """The server's state, with config.yaml/profile.yaml re-read if edited."""
+    app = context.request_context.lifespan_context
+    app.refresh()
+    return app
 
 
 @contextlib.asynccontextmanager
@@ -60,6 +127,9 @@ async def lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
     runs startup checks, and yields the AppContext. Raises ConfigError before
     yielding on an invalid config, refusing to boot."""
     _setup_logging()
+    home = moonlighter_home()
+    config_file = _WatchedFile(home / "config.yaml")
+    profile_file = _WatchedFile(home / "profile.yaml")
     config = load_config()
     validate_config(config)  # raises ConfigError -> server refuses to boot
     try:
@@ -83,6 +153,8 @@ async def lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
         llm_caller=llm_caller,
         startup_warnings=startup_warnings,
         permission_warnings=permission_warnings,
+        config_file=config_file,
+        profile_file=profile_file,
     )
 
 
@@ -104,7 +176,7 @@ async def scan_and_evaluate(
         phase: "phase1" (default/BR), "phase2" (remote-first global),
                "phase3" (big techs), or "all" (everything)
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("scan_and_evaluate"):
         return render_scan_report(
             await scan_service.scan_and_evaluate(
@@ -126,7 +198,7 @@ async def scan_company(source: str, company: str, *, context: Context[AppContext
         company: the company's slug on that ATS (e.g. "trm-labs"), or a full
                  custom career domain for Recruitee (e.g. "jobs.channable.com")
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("scan_company"):
         return render_scan_report(
             await scan_service.scan_company(
@@ -162,7 +234,7 @@ async def add_job(
             required otherwise.
         description: job description text. If empty, tries to fetch it automatically.
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     return await scan_service.add_job(
         url, company, title, description, app.config, app.profile, app.llm_caller
     )
@@ -188,7 +260,7 @@ async def verify_job(
         job_id: the pending job's ID (from list_jobs(status="needs_review") or get_job)
         page_text: the copied page text — becomes the job's real description
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     return await scan_service.verify_job(job_id, page_text, app.config, app.profile, app.llm_caller)
 
 
@@ -214,7 +286,7 @@ async def archive_stale_jobs(
         company: check only jobs from this company, case-insensitive (mutually exclusive
                  with job_id).
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     try:
         result = await scan_service.archive_stale_jobs(job_id, company, app.config)
     except ArchiveStaleJobsError as error:
@@ -294,7 +366,7 @@ async def prepare_application(job_id: int, *, context: Context[AppContext, Any])
     what its form will insist on.
     job_id: ID of the job
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("prepare_application"):
         return render_sheet_result(
             await assisted_service.prepare_application(job_id, app.config, app.profile)
@@ -314,7 +386,7 @@ async def prepare_application_from_paste(
     job_id: ID of the job
     page_text: everything copied off the application page
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("prepare_application_from_paste"):
         return render_sheet_result(
             await assisted_service.prepare_application_from_paste(
@@ -327,7 +399,7 @@ async def prepare_application_from_paste(
 @tool_logged
 async def get_pipeline(*, context: Context[AppContext, Any]) -> str:
     """Show full application funnel: counts and list by status."""
-    app = context.request_context.lifespan_context
+    app = _app(context)
     warnings = validate_startup(app.config, app.profile)
     statuses = [
         "draft",
@@ -446,7 +518,7 @@ async def list_answer_bank(*, context: Context[AppContext, Any]) -> str:
     answer_bank_max_age_days are marked expired: kept, but no longer replayed
     on a sheet until a new submission refreshes them.
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     max_age = app.config.get("answer_bank_max_age_days", DEFAULTS["answer_bank_max_age_days"])
     return render_answer_bank(list_entries(), max_age)
 
@@ -476,7 +548,7 @@ async def setup_email(*, context: Context[AppContext, Any]) -> str:
     (default MOONLIGHTER_HOME/gmail-client.json) and writes the token to
     email.token_path — overwriting whatever file that path names.
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     config = app.config
     email_config = config.get("email", {})
 
@@ -521,7 +593,7 @@ async def bootstrap_cv_pool(*, context: Context[AppContext, Any]) -> str:
     prepare_application whenever it finds no pool yet (see its
     cv_bootstrap_offer response), until you bootstrap one or skip it.
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     caller = make_caller(app.config)
     try:
         outcome = await bootstrap_cv_pool_service(app.profile, app.config, caller)
@@ -588,7 +660,7 @@ async def sync_email_responses(*, context: Context[AppContext, Any]) -> str:
     classify them with the LLM, and update the applications database.
     Returns a summary of the updates made.
     """
-    app = context.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("sync_email_responses"):
         updates = await sync_responses(app.config, app.llm_caller)
 
