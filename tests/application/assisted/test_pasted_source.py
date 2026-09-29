@@ -225,3 +225,20 @@ async def test_the_prompt_asks_for_labels_without_markers():
     call, captured = fake_llm(json.dumps({"questions": []}))
     await extract_questions_from_page(PAGE, call)
     assert "without its required or optional marker" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_covers_the_three_remaining_ambiguities():
+    """2026-09-29 forge baseline (fields cases, 77.0%): the failures clustered in
+    three prompt gaps. A search box with no visible options came back as text
+    (4 cases); a multi-paragraph label came back cut to its first paragraph
+    (2); a Yes/No question with no visible options got English answers on a
+    German page (3)."""
+    call, captured = fake_llm(json.dumps({"questions": []}))
+    await extract_questions_from_page(PAGE, call)
+    prompt = captured["prompt"]
+    assert "searchable dropdown" in prompt and "options []" in prompt
+    # Narrowed after the first re-run: "Start typing..." fields became long_text.
+    assert "typing placeholder" in prompt
+    assert "several lines or paragraphs" in prompt
+    assert "in the question's language" in prompt
