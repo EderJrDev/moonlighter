@@ -16,7 +16,10 @@ from moonlighter.application.assisted.sources.base import (
     questions_or_empty,
     required_fields_or_empty,
 )
-from moonlighter.application.assisted.sources.pasted import extract_questions_from_page
+from moonlighter.application.assisted.sources.pasted import (
+    ExtractionError,
+    extract_questions_from_page,
+)
 from moonlighter.application.cvgen.service import ensure_tailored_cv, resolved_pool_path
 from moonlighter.core.config import DEFAULTS
 from moonlighter.core.db import Application, Job, cv_bootstrap_declined
@@ -26,6 +29,9 @@ from moonlighter.core.email_alias import (
     new_email_ref,
 )
 from moonlighter.core.llm import make_caller
+from moonlighter.core.log import get_logger
+
+logger = get_logger(__name__)
 
 PASTE_HINT = (
     "No form questions could be read for this job.\n"
@@ -284,7 +290,15 @@ async def prepare_application_from_paste(
         return await _sheet(
             job, api_questions, config, profile, source_note=SOURCE_NOTE_PASTE_IGNORED
         )
-    questions = await extract_questions_from_page(page_text, make_caller(config))
+    try:
+        questions = await extract_questions_from_page(page_text, make_caller(config))
+    except ExtractionError as error:
+        logger.warning("paste extraction failed for job %s: %s", job.id, error)
+        return failed_sheet(
+            SheetKind.NO_QUESTIONS,
+            "The model's reading of that text could not be used — nothing is wrong with "
+            "the paste. Just run it again.",
+        )
     if not questions:
         return failed_sheet(
             SheetKind.NO_QUESTIONS,

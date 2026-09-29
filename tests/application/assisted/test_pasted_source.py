@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 from moonlighter.application.assisted.questions import QuestionKind
-from moonlighter.application.assisted.sources.pasted import extract_questions_from_page
+from moonlighter.application.assisted.sources.pasted import (
+    ExtractionError,
+    extract_questions_from_page,
+)
 
 PAGE = (Path(__file__).parent / "fixtures" / "pasted_page.txt").read_text()
 
@@ -59,9 +62,13 @@ async def test_the_pasted_text_is_wrapped_as_untrusted():
 
 
 @pytest.mark.asyncio
-async def test_an_unparseable_reply_yields_no_questions():
+async def test_an_unparseable_reply_is_an_error_not_an_empty_page():
+    """It used to return [], which the paste flow reported as "no questions -
+    was the whole page copied?": the person re-copied a page that was fine.
+    Seen in the forge run of 2026-09-29 (salary case, 1 of 2 runs)."""
     call, _ = fake_llm("sorry, I cannot help with that")
-    assert await extract_questions_from_page(PAGE, call) == []
+    with pytest.raises(ExtractionError, match="sorry, I cannot help"):
+        await extract_questions_from_page(PAGE, call)
 
 
 @pytest.mark.asyncio
@@ -99,8 +106,15 @@ async def test_a_non_dict_entry_in_the_question_list_is_skipped():
 
 
 @pytest.mark.asyncio
-async def test_a_non_dict_reply_yields_no_questions():
+async def test_a_non_dict_reply_is_an_error_not_an_empty_page():
     call, _ = fake_llm(json.dumps(["not", "a", "dict"]))
+    with pytest.raises(ExtractionError):
+        await extract_questions_from_page(PAGE, call)
+
+
+@pytest.mark.asyncio
+async def test_a_reply_with_an_empty_question_list_is_a_page_without_questions():
+    call, _ = fake_llm(json.dumps({"questions": []}))
     assert await extract_questions_from_page(PAGE, call) == []
 
 
@@ -242,3 +256,12 @@ async def test_the_prompt_covers_the_three_remaining_ambiguities():
     assert "typing placeholder" in prompt
     assert "several lines or paragraphs" in prompt
     assert "in the question's language" in prompt
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_says_open_questions_are_long_text():
+    """2026-09-29 full forge run: 6 of 9 failures were open questions ("Tell us
+    why...", "Describe...", "Cover Letter") returned as text."""
+    call, captured = fake_llm(json.dumps({"questions": []}))
+    await extract_questions_from_page(PAGE, call)
+    assert "open question" in captured["prompt"] and "long_text" in captured["prompt"]
