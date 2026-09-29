@@ -59,6 +59,7 @@ DEFAULTS: dict[str, Any] = {
     #   "cursor" -> the Cursor `agent` CLI (`cursor-agent` if `agent` is absent).
     #               Account login (`agent login`). llm_model is not forwarded:
     #               those ids belong to Anthropic and the Cursor CLI rejects them.
+    #               Optional `cursor_model` is forwarded as `--model` when set.
     # Default is "cli" because that is what `moonlighter init`, the README, and
     # config.example.yaml all lead with -- an installer coming through
     # `uvx moonlighter` has Claude Code far more often than an API key.
@@ -137,6 +138,7 @@ _CONFIG_SCHEMA: dict[str, tuple[type, ...]] = {
     "llm_model": (str,),
     "eval_model": (str,),
     "llm_backend": (str,),
+    "cursor_model": (str,),
     "title_blocklist": (list,),
     "cv": (dict,),
     "work_authorization": (dict,),

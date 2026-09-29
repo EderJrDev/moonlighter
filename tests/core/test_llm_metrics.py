@@ -3,11 +3,20 @@ active — CLI records time only (no token usage exposed), API records real
 message.usage tokens."""
 
 import contextlib
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from anthropic.types import TextBlock
 from moonlighter.core.llm import _call_cli, _call_cursor, make_api_caller
 from moonlighter.core.metrics import operation_metrics
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cursor_projects(monkeypatch):
+    monkeypatch.setattr(
+        "moonlighter.core.llm._cursor_projects_root", lambda: Path("/no/such/cursor/projects")
+    )
 
 
 async def test_cli_caller_records_a_call():

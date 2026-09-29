@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from moonlighter.application.answers.cv import configured_cv_path
 from moonlighter.core.config import browser_executable, llm_backend, moonlighter_home
+from moonlighter.core.llm import cursor_executable
 
 
 @dataclass
@@ -64,8 +65,7 @@ def _check_llm_backend(config: dict[str, Any]) -> StartupWarning | None:
             "llm_backend: cli in config.yaml to use your Claude subscription instead.",
         )
     if backend == "cursor":
-        # Same lookup as _call_cursor: `agent`, then the older `cursor-agent` name.
-        if shutil.which("agent") is not None or shutil.which("cursor-agent") is not None:
+        if cursor_executable() is not None:
             return None
         return StartupWarning(
             "error",

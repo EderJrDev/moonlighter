@@ -491,6 +491,24 @@ def test_validate_config_accepts_known_backends():
     validate_config({"llm_backend": "cursor"})
 
 
+def test_validate_config_accepts_cursor_model():
+    validate_config({"cursor_model": "gpt-5"})
+
+
+def test_validate_config_rejects_a_non_string_cursor_model():
+    with pytest.raises(ConfigError, match="cursor_model"):
+        validate_config({"cursor_model": 1})
+
+
+def test_load_config_keeps_cursor_model_and_does_not_invent_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text("llm_backend: cursor\ncursor_model: gpt-5\n")
+    assert load_config(tmp_path / "config.yaml")["cursor_model"] == "gpt-5"
+
+    (tmp_path / "config.yaml").write_text("score_threshold: 7.0\n")
+    assert "cursor_model" not in load_config(tmp_path / "config.yaml")
+
+
 def test_load_config_fills_llm_backend_from_defaults(tmp_path, monkeypatch):
     """The default has to arrive through DEFAULTS, not through a `.get()`
     fallback at each call site -- that divergence is what made the wizard, the
