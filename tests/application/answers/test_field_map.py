@@ -39,18 +39,18 @@ WA_CONFIG_BRAZIL = {
 
 
 def test_first_name():
-    r = pre_populate_answers(["First Name"], PROFILE)
-    assert r["First Name"] == "Maria"
+    result = pre_populate_answers(["First Name"], PROFILE)
+    assert result["First Name"] == "Maria"
 
 
 def test_last_name():
-    r = pre_populate_answers(["Last Name"], PROFILE)
-    assert r["Last Name"] == "de Souza Pereira"
+    result = pre_populate_answers(["Last Name"], PROFILE)
+    assert result["Last Name"] == "de Souza Pereira"
 
 
 def test_preferred_name():
-    r = pre_populate_answers(["Preferred First Name"], PROFILE)
-    assert r["Preferred First Name"] == "Maria"
+    result = pre_populate_answers(["Preferred First Name"], PROFILE)
+    assert result["Preferred First Name"] == "Maria"
 
 
 def test_full_name():
@@ -58,83 +58,98 @@ def test_full_name():
     first+last convention. Without a rule it fell through to the LLM, which
     answered "full legal name is not present in the profile" -- leaving a
     required field blank on a real application (live Recruitee, 2026-08-03)."""
-    r = pre_populate_answers(["Full name"], PROFILE)
-    assert r["Full name"] == "Maria de Souza Pereira"
+    result = pre_populate_answers(["Full name"], PROFILE)
+    assert result["Full name"] == "Maria de Souza Pereira"
 
 
 def test_full_name_variants():
     for label in ["Full Name *", "full name", "Your full name", "Nome completo"]:
-        r = pre_populate_answers([label], PROFILE)
-        assert r.get(label) == "Maria de Souza Pereira", f"{label!r} não preencheu"
+        result = pre_populate_answers([label], PROFILE)
+        assert result.get(label) == "Maria de Souza Pereira", f"{label!r} não preencheu"
+
+
+def test_a_bare_name_label_is_the_full_name():
+    """Ashby's application page asks for a single "Name" field. With no rule it
+    went to the LLM, which answered "I DON'T KNOW — no basis in your profile"
+    (ElevenLabs #6675, 2026-09-25). Reproduced 2026-09-29: the extractor returns
+    the field every time; the miss was here."""
+    for label in ["Name", "Name *", "*\nName", "Your name"]:
+        answers = pre_populate_answers([label], PROFILE)
+        assert answers.get(label) == "Maria de Souza Pereira", f"{label!r} was not filled"
+
+
+def test_a_label_that_merely_starts_with_name_is_left_alone():
+    for label in ["Name of your current employer", "Name pronunciation"]:
+        assert label not in pre_populate_answers([label], PROFILE)
 
 
 def test_full_name_does_not_shadow_first_or_last():
     """The full-name rule must not swallow the first/last labels it sits near."""
-    r = pre_populate_answers(["First Name", "Last Name"], PROFILE)
-    assert r["First Name"] == "Maria"
-    assert r["Last Name"] == "de Souza Pereira"
+    result = pre_populate_answers(["First Name", "Last Name"], PROFILE)
+    assert result["First Name"] == "Maria"
+    assert result["Last Name"] == "de Souza Pereira"
 
 
 def test_phone():
-    r = pre_populate_answers(["Phone"], PROFILE)
-    assert r["Phone"] == "11912345678"
+    result = pre_populate_answers(["Phone"], PROFILE)
+    assert result["Phone"] == "11912345678"
 
 
 def test_email():
-    r = pre_populate_answers(["Email"], PROFILE)
-    assert r["Email"] == "maria.pereira@example.com"
+    result = pre_populate_answers(["Email"], PROFILE)
+    assert result["Email"] == "maria.pereira@example.com"
 
 
 def test_linkedin():
-    r = pre_populate_answers(["LinkedIn Profile"], PROFILE)
-    assert r["LinkedIn Profile"] == "https://www.linkedin.com/in/mariapereira/"
+    result = pre_populate_answers(["LinkedIn Profile"], PROFILE)
+    assert result["LinkedIn Profile"] == "https://www.linkedin.com/in/mariapereira/"
 
 
 def test_github():
     # A "Github" field became a gap on the live Resend form (2026-08-20):
     # linkedin and website had static rules, github never did.
-    r = pre_populate_answers(["GitHub Profile"], PROFILE)
-    assert r["GitHub Profile"] == "https://github.com/mariapereira"
+    result = pre_populate_answers(["GitHub Profile"], PROFILE)
+    assert result["GitHub Profile"] == "https://github.com/mariapereira"
 
 
 def test_location_city():
-    r = pre_populate_answers(["Location (City)"], PROFILE)
-    assert r["Location (City)"] == "São Paulo"
+    result = pre_populate_answers(["Location (City)"], PROFILE)
+    assert result["Location (City)"] == "São Paulo"
 
 
 def test_address():
-    r = pre_populate_answers(["Address"], PROFILE)
-    assert r["Address"] == "São Paulo, SP, Brasil"
+    result = pre_populate_answers(["Address"], PROFILE)
+    assert result["Address"] == "São Paulo, SP, Brasil"
 
 
 def test_country():
-    r = pre_populate_answers(["Country"], PROFILE)
-    assert r["Country"] == "Brazil"
+    result = pre_populate_answers(["Country"], PROFILE)
+    assert result["Country"] == "Brazil"
 
 
 def test_visa_field_unknown_country_needs_review():
     fields = ["Will you now or in the future require visa support to work in the role's location?"]
-    r = pre_populate_answers(fields, PROFILE)  # no job_location → unknown country
-    assert r[fields[0]] == "__NEEDS_REVIEW__"
+    result = pre_populate_answers(fields, PROFILE)  # no job_location → unknown country
+    assert result[fields[0]] == "__NEEDS_REVIEW__"
 
 
 def test_visa_field_brazil_location_answers_no():
     fields = ["Will you require visa sponsorship?"]
-    r = pre_populate_answers(
+    result = pre_populate_answers(
         fields, PROFILE, config=WA_CONFIG_BRAZIL, job_location="São Paulo, Brazil"
     )
-    assert r[fields[0]] == "No"
+    assert result[fields[0]] == "No"
 
 
 def test_office_availability():
     fields = ["Are you able to work from the office at least two days per week?"]
-    r = pre_populate_answers(fields, PROFILE)
-    assert r[fields[0]] == "Yes"
+    result = pre_populate_answers(fields, PROFILE)
+    assert result[fields[0]] == "Yes"
 
 
 def test_english_level():
-    r = pre_populate_answers(["English level"], PROFILE)
-    assert r["English level"] == "Fluent"
+    result = pre_populate_answers(["English level"], PROFILE)
+    assert result["English level"] == "Fluent"
 
 
 # ── EEO/demographics: demographic_answer, NOT the _RULES ladder ──────────────
@@ -289,81 +304,81 @@ def test_demographic_answer_treats_a_blank_string_as_unset():
 
 
 def test_currently_based():
-    r = pre_populate_answers(["Where are you currently based?"], PROFILE)
-    assert r["Where are you currently based?"] == "São Paulo"
+    result = pre_populate_answers(["Where are you currently based?"], PROFILE)
+    assert result["Where are you currently based?"] == "São Paulo"
 
 
 def test_unknown_field_not_included():
-    r = pre_populate_answers(["Why do you want to work here?"], PROFILE)
-    assert "Why do you want to work here?" not in r
+    result = pre_populate_answers(["Why do you want to work here?"], PROFILE)
+    assert "Why do you want to work here?" not in result
 
 
 def test_strips_asterisk_from_label():
-    r = pre_populate_answers(["Phone *"], PROFILE)
-    assert r["Phone *"] == "11912345678"
+    result = pre_populate_answers(["Phone *"], PROFILE)
+    assert result["Phone *"] == "11912345678"
 
 
 def test_empty_profile_phone_not_included():
-    r = pre_populate_answers(["Phone"], {})
-    assert "Phone" not in r
+    result = pre_populate_answers(["Phone"], {})
+    assert "Phone" not in result
 
 
 def test_multiple_fields():
     fields = ["First Name", "Last Name", "Phone", "Email", "Why do you want to work here?"]
-    r = pre_populate_answers(fields, PROFILE)
-    assert len(r) == 4
-    assert "Why do you want to work here?" not in r
+    result = pre_populate_answers(fields, PROFILE)
+    assert len(result) == 4
+    assert "Why do you want to work here?" not in result
 
 
 # ── PT-BR labels (Portuguese-language forms, e.g. Nubank Investments) ─────────
 
 
 def test_ptbr_nome_first_name():
-    r = pre_populate_answers(["Nome"], PROFILE)
-    assert r["Nome"] == "Maria"
+    result = pre_populate_answers(["Nome"], PROFILE)
+    assert result["Nome"] == "Maria"
 
 
 def test_ptbr_sobrenome_last_name():
-    r = pre_populate_answers(["Sobrenome"], PROFILE)
-    assert r["Sobrenome"] == "de Souza Pereira"
+    result = pre_populate_answers(["Sobrenome"], PROFILE)
+    assert result["Sobrenome"] == "de Souza Pereira"
 
 
 def test_ptbr_nome_de_preferencia():
-    r = pre_populate_answers(["Nome de preferência"], PROFILE)
-    assert r["Nome de preferência"] == "Maria"
+    result = pre_populate_answers(["Nome de preferência"], PROFILE)
+    assert result["Nome de preferência"] == "Maria"
 
 
 def test_ptbr_email():
-    r = pre_populate_answers(["E-mail"], PROFILE)
-    assert r["E-mail"] == "maria.pereira@example.com"
+    result = pre_populate_answers(["E-mail"], PROFILE)
+    assert result["E-mail"] == "maria.pereira@example.com"
 
 
 def test_ptbr_telefone():
-    r = pre_populate_answers(["Telefone"], PROFILE)
-    assert r["Telefone"] == "11912345678"
+    result = pre_populate_answers(["Telefone"], PROFILE)
+    assert result["Telefone"] == "11912345678"
 
 
 def test_ptbr_pais_brasil():
-    r = pre_populate_answers(["País"], PROFILE)
-    assert r["País"] == "Brasil"
+    result = pre_populate_answers(["País"], PROFILE)
+    assert result["País"] == "Brasil"
 
 
 def test_ptbr_localizacao_cidade():
-    r = pre_populate_answers(["Localização (Cidade)"], PROFILE)
-    assert r["Localização (Cidade)"] == "São Paulo"
+    result = pre_populate_answers(["Localização (Cidade)"], PROFILE)
+    assert result["Localização (Cidade)"] == "São Paulo"
 
 
 def test_ptbr_strips_asterisk():
-    r = pre_populate_answers(["Telefone*", "Nome*", "Sobrenome*"], PROFILE)
-    assert r["Telefone*"] == "11912345678"
-    assert r["Nome*"] == "Maria"
-    assert r["Sobrenome*"] == "de Souza Pereira"
+    result = pre_populate_answers(["Telefone*", "Nome*", "Sobrenome*"], PROFILE)
+    assert result["Telefone*"] == "11912345678"
+    assert result["Nome*"] == "Maria"
+    assert result["Sobrenome*"] == "de Souza Pereira"
 
 
 def test_currently_based_question_fills_city():
     """'Where are you currently based?' keeps pre-populating the city."""
-    r = pre_populate_answers(["Where are you currently based?"], PROFILE)
-    assert r["Where are you currently based?"] == "São Paulo"
+    result = pre_populate_answers(["Where are you currently based?"], PROFILE)
+    assert result["Where are you currently based?"] == "São Paulo"
 
 
 def test_currently_based_midsentence_confirmation_not_prepopulated():
@@ -373,8 +388,8 @@ def test_currently_based_midsentence_confirmation_not_prepopulated():
         "You are aware that this is a hybrid position and we require you to be "
         'currently based in one of the job post locations. Type "Yes, I am aware" if you confirm.'
     )
-    r = pre_populate_answers([label], PROFILE)
-    assert label not in r
+    result = pre_populate_answers([label], PROFILE)
+    assert label not in result
 
 
 # ── Optional profile fields (country_en, country_pt, english_level, office_available) ─────
@@ -391,20 +406,20 @@ PROFILE_NO_LOCALE = {
 
 def test_country_absent_from_profile_not_prepopulated():
     """No country_en in the profile → 'Country' field doesn't enter the result (LLM decides)."""
-    r = pre_populate_answers(["Country"], PROFILE_NO_LOCALE)
-    assert "Country" not in r
+    result = pre_populate_answers(["Country"], PROFILE_NO_LOCALE)
+    assert "Country" not in result
 
 
 def test_pais_absent_from_profile_not_prepopulated():
     """No country_pt in the profile → 'País' field doesn't enter the result."""
-    r = pre_populate_answers(["País"], PROFILE_NO_LOCALE)
-    assert "País" not in r
+    result = pre_populate_answers(["País"], PROFILE_NO_LOCALE)
+    assert "País" not in result
 
 
 def test_english_level_absent_from_profile_not_prepopulated():
     """No english_level in the profile → 'English level' field doesn't enter the result."""
-    r = pre_populate_answers(["English level"], PROFILE_NO_LOCALE)
-    assert "English level" not in r
+    result = pre_populate_answers(["English level"], PROFILE_NO_LOCALE)
+    assert "English level" not in result
 
 
 # The five per-label "absent from profile" tests that used to sit here were deleted
@@ -419,41 +434,41 @@ def test_english_level_absent_from_profile_not_prepopulated():
 def test_office_available_true_returns_yes():
     """office_available=True → 'Yes'."""
     profile = {**PROFILE_NO_LOCALE, "office_available": True}
-    r = pre_populate_answers(
+    result = pre_populate_answers(
         ["Are you able to work from the office at least two days per week?"], profile
     )
-    assert r["Are you able to work from the office at least two days per week?"] == "Yes"
+    assert result["Are you able to work from the office at least two days per week?"] == "Yes"
 
 
 def test_office_available_false_returns_no():
     """office_available=False → 'No'."""
     profile = {**PROFILE_NO_LOCALE, "office_available": False}
-    r = pre_populate_answers(
+    result = pre_populate_answers(
         ["Are you able to work from the office at least two days per week?"], profile
     )
-    assert r["Are you able to work from the office at least two days per week?"] == "No"
+    assert result["Are you able to work from the office at least two days per week?"] == "No"
 
 
 def test_office_absent_from_profile_not_prepopulated():
     """No office_available in the profile → field doesn't enter the result."""
-    r = pre_populate_answers(
+    result = pre_populate_answers(
         ["Are you able to work from the office at least two days per week?"], PROFILE_NO_LOCALE
     )
-    assert "Are you able to work from the office at least two days per week?" not in r
+    assert "Are you able to work from the office at least two days per week?" not in result
 
 
 def test_country_en_from_profile():
     """country_en in the profile → used as the answer for ^country$."""
     profile = {**PROFILE_NO_LOCALE, "country_en": "Germany"}
-    r = pre_populate_answers(["Country"], profile)
-    assert r["Country"] == "Germany"
+    result = pre_populate_answers(["Country"], profile)
+    assert result["Country"] == "Germany"
 
 
 def test_english_level_from_profile():
     """english_level in the profile → used in the proficiency rule."""
     profile = {**PROFILE_NO_LOCALE, "english_level": "Native"}
-    r = pre_populate_answers(["English level"], profile)
-    assert r["English level"] == "Native"
+    result = pre_populate_answers(["English level"], profile)
+    assert result["English level"] == "Native"
 
 
 # ── Compensation (E2) — filled statically so the salary figure never reaches the LLM ──
@@ -745,20 +760,20 @@ def test_required_marker_on_its_own_line_does_not_break_matching():
     matched and the name, phone and email were left for the LLM to guess —
     including the tracking alias field, which must never be guessed. Observed on
     a live Workable posting, 2026-08-04."""
-    r = pre_populate_answers(["*\nFirst name", "*\nLast name"], PROFILE)
-    assert r["*\nFirst name"] == "Maria"
-    assert r["*\nLast name"] == "de Souza Pereira"
+    result = pre_populate_answers(["*\nFirst name", "*\nLast name"], PROFILE)
+    assert result["*\nFirst name"] == "Maria"
+    assert result["*\nLast name"] == "de Souza Pereira"
 
 
 def test_trailing_country_code_line_does_not_break_matching():
     """'*\\nPhone\\n+55' — the country code is appended on its own line."""
-    r = pre_populate_answers(["*\nPhone\n+55"], PROFILE)
-    assert r["*\nPhone\n+55"] == "11912345678"
+    result = pre_populate_answers(["*\nPhone\n+55"], PROFILE)
+    assert result["*\nPhone\n+55"] == "11912345678"
 
 
 def test_email_label_with_a_leading_marker_is_still_deterministic():
-    r = pre_populate_answers(["*\nEmail"], PROFILE)
-    assert r["*\nEmail"] == "maria.pereira@example.com"
+    result = pre_populate_answers(["*\nEmail"], PROFILE)
+    assert result["*\nEmail"] == "maria.pereira@example.com"
 
 
 def test_normalisation_does_not_swallow_a_real_multi_line_question():

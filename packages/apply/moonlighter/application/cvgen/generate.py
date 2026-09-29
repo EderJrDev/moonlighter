@@ -26,8 +26,8 @@ USE_BASE: Final = "use_base"
 # grouped layout fits 9 bullets plus the three prose entries on one page; the
 # orchestrator still verifies the page count and shrinks if the model's
 # choices run long.
-MAX_BULLETS: Final = 9
-MAX_OPEN_SOURCE: Final = 1
+MAXIMUM_BULLETS: Final = 9
+MAXIMUM_OPEN_SOURCE: Final = 1
 
 _PREFIX = """You are tailoring a CV for one specific job posting.
 
@@ -37,6 +37,9 @@ _PREFIX = """You are tailoring a CV for one specific job posting.
 ## The bullet pool
 Every line of CV content you may use, each with an id and angle tags. You select and order ids;
 you never author a new factual claim — facts outside this pool and the profile do not exist.
+The profile's skills notes are limits as well as strengths: a technology noted as studied,
+basic, or not used in production never appears as production experience in the summary or
+the technical expertise line. Leaving a technology out is fine; a claim the profile denies is not.
 {pool}
 
 ## Summary guidance
@@ -82,21 +85,21 @@ def _prefix(pool: CVPool, profile: dict[str, Any], base_summary: str, base_exper
     pool_lines = []
     for exp in pool.experiences:
         pool_lines.append(f"{exp.company} — {exp.title} ({exp.period}):")
-        for b in exp.bullets:
-            pool_lines.append(f"  [{b.id}] ({', '.join(b.angles)}) {b.latex}")
+        for bullet in exp.bullets:
+            pool_lines.append(f"  [{bullet.id}] ({', '.join(bullet.angles)}) {bullet.latex}")
         if exp.prose_id:
             pool_lines.append(f"  [{exp.prose_id}] (prose) {exp.prose}")
     pool_lines.append("Open source:")
-    for b in pool.open_source:
-        pool_lines.append(f"  [{b.id}] ({', '.join(b.angles)}) {b.latex}")
+    for bullet in pool.open_source:
+        pool_lines.append(f"  [{bullet.id}] ({', '.join(bullet.angles)}) {bullet.latex}")
     return _PREFIX.format(
         profile=str(profile_for_answers(profile)),
         pool="\n".join(pool_lines),
-        summary_facts="\n".join(f"- {f}" for f in pool.summary_facts),
+        summary_facts="\n".join(f"- {fact}" for fact in pool.summary_facts),
         base_summary=base_summary,
         base_expertise=base_expertise,
-        max_bullets=MAX_BULLETS,
-        max_open_source=MAX_OPEN_SOURCE,
+        max_bullets=MAXIMUM_BULLETS,
+        max_open_source=MAXIMUM_OPEN_SOURCE,
     )
 
 
@@ -114,20 +117,20 @@ def _known_ids(value: Any, known: frozenset[str]) -> tuple[str, ...]:
     """
     if not isinstance(value, list):
         return ()
-    return tuple(b for b in value if isinstance(b, str) and b in known)
+    return tuple(item for item in value if isinstance(item, str) and item in known)
 
 
 def _cap(ids: tuple[str, ...], prose_ids: frozenset[str]) -> tuple[str, ...]:
-    """At most MAX_BULLETS experience bullets, in the model's order; prose ids
+    """At most MAXIMUM_BULLETS experience bullets, in the model's order; prose ids
     ride along uncounted (prose entries render regardless — the id only carries
     a translation)."""
     kept: list[str] = []
     count = 0
-    for i in ids:
-        if i in prose_ids:
-            kept.append(i)
-        elif count < MAX_BULLETS:
-            kept.append(i)
+    for bullet_id in ids:
+        if bullet_id in prose_ids:
+            kept.append(bullet_id)
+        elif count < MAXIMUM_BULLETS:
+            kept.append(bullet_id)
             count += 1
     return tuple(kept)
 
@@ -179,10 +182,10 @@ async def decide_cv(
     prefix = _prefix(pool, profile, base_summary, base_expertise)
     try:
         data = parse_llm_json(await caller(suffix, "claude-sonnet-4-6", cache_prefix=prefix))
-    except Exception as e:
-        if is_spend_limit(e):
+    except Exception as error:
+        if is_spend_limit(error):
             raise  # quota is the orchestrator's call, not a silent degrade
-        logger.warning("cv generation failed, using default CV — %s", e)
+        logger.warning("cv generation failed, using default CV — %s", error)
         return None
     if not isinstance(data, dict):
         return None  # unparseable shape — degrade, don't lock in
@@ -193,7 +196,7 @@ async def decide_cv(
         return None  # unrecognized decision — degrade, don't lock in
     known = pool.bullet_ids()
     bullets = _cap(_known_ids(data.get("bullets"), known), pool.prose_ids())
-    open_source = _known_ids(data.get("open_source"), known)[:MAX_OPEN_SOURCE]
+    open_source = _known_ids(data.get("open_source"), known)[:MAXIMUM_OPEN_SOURCE]
 
     # Operator-note guard: reject if generated prose is addressing the operator.
     # Translations are prose in the same dialect now, so they answer to it too —

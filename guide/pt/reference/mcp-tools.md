@@ -2,7 +2,7 @@
 
 # Ferramentas MCP
 
-O servidor MCP `moonlighter` expõe 17 ferramentas. Você raramente as chama pelo nome: peça ao Claude em linguagem natural ("escaneia minhas empresas", "prepara a candidatura da vaga 42") e ele escolhe a ferramenta. Os nomes abaixo são o que aparece nas chamadas de ferramenta do Claude.
+O servidor MCP `moonlighter` expõe 18 ferramentas. Você raramente as chama pelo nome: peça ao Claude em linguagem natural ("escaneia minhas empresas", "prepara a candidatura da vaga 42") e ele escolhe a ferramenta. Os nomes abaixo são o que aparece nas chamadas de ferramenta do Claude.
 
 ## Escanear e dar nota
 
@@ -12,7 +12,7 @@ O servidor MCP `moonlighter` expõe 17 ferramentas. Você raramente as chama pel
 | `scan_company` | Escaneia agora o portal de uma empresa e dá nota às vagas novas, sem editar o `company_list.yaml` |
 | `add_job` | Adiciona uma vaga à mão, pela URL |
 | `verify_job` | Dá nota a uma vaga deixada como `needs_review` (descrição vazia), a partir do texto que você copia da página da vaga |
-| `archive_stale_jobs` | Arquiva vagas que sumiram da fonte; uma empresa cuja checagem falha é reportada e fica intocada |
+| `archive_stale_jobs` | Arquiva vagas que sumiram da fonte; uma empresa cuja checagem falha é reportada e fica intocada, e uma vaga adicionada por URL (sem listagem para conferir) aparece com o link para você confirmar |
 
 ## Navegar pelo pipeline
 
@@ -21,6 +21,7 @@ O servidor MCP `moonlighter` expõe 17 ferramentas. Você raramente as chama pel
 | `list_jobs` | Lista vagas por status (`new`, `needs_review`, `applied`, `rejected`, `archived`, …) |
 | `get_job` | Mostra os detalhes completos e o histórico de pipeline de uma vaga |
 | `get_pipeline` | Resumo completo do pipeline — e problemas de configuração, como perfil ou CV ausentes |
+| `reopen_job` | Traz uma vaga arquivada de volta para `reviewed`, para você se candidatar mesmo assim |
 | `update_status` | Move à mão a candidatura de uma vaga pelo pipeline (`submitted`, `screening`, `interviews`, `offer`, `rejected`, `draft`) |
 
 ## Preparar candidaturas

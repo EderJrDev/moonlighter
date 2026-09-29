@@ -6,6 +6,7 @@ config/profile/caller logic, without depending on the global config loaded on im
 """
 
 import asyncio
+import datetime
 from typing import ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -182,6 +183,81 @@ async def test_add_job_routes_through_ats_when_fields_missing(temporary_database
     assert job.company == "GitLab"
     assert job.title == "Account Executive"
     assert job.description == "Build things."
+
+
+async def test_add_job_hands_the_ats_location_to_the_evaluator(temporary_database):
+    """Without the structured location the LLM judges eligibility from the text alone —
+    the 2026-08-21 gitlab false-positive class, reintroduced by any caller that omits it."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab",
+        title="Account Executive",
+        description="Build things.",
+        location="Bangalore, India",
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792003"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(url, "", "", "", CONFIG, PROFILE, MagicMock())
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] is None
+    job = Job.get(Job.url == url)
+    assert job.location == "Bangalore, India"
+
+
+async def test_add_job_takes_the_ats_location_even_when_every_field_was_given(
+    temporary_database,
+):
+    """With company, title and description all pasted, the ATS lookup used to be
+    skipped, and the evaluator ran with no location — the gap this branch closes."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab", title="Engineer", description="API text.", location="Bangalore, India"
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792004"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            url, "GitLab", "Engineer", "Pasted text.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    # What the person pasted still wins over the API's copy.
+    assert eval_mock.call_args.kwargs["description"] == "Pasted text."
+
+
+async def test_add_job_marks_a_remote_ats_posting_remote(temporary_database):
+    init_db()
+    posting = FetchedPosting(
+        company="Channable",
+        title="Backend Engineer",
+        description="Elixir.",
+        location="Utrecht",
+        remote=True,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            "https://jobs.channable.com/o/backend", "", "", "", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["remote_type"] == "remote"
 
 
 async def test_add_job_http_non_200_returns_error(temporary_database):
@@ -374,6 +450,27 @@ async def test_verify_job_rejects_a_too_short_paste_and_leaves_job_pending(tempo
     assert "0 chars" in result
     assert "stays pending" in result
     assert Job.get_by_id(job.id).status == "needs_review"
+
+
+async def test_verify_job_hands_the_stored_location_to_the_evaluator(temporary_database):
+    init_db()
+    job = Job.create(
+        source="greenhouse",
+        company="GitLab",
+        title="Engineer",
+        url="https://x.com/vj/location",
+        location="Bangalore, India",
+        remote_type="onsite",
+        status="needs_review",
+        score=None,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with patch("moonlighter.discovery.service.evaluate_job", new=eval_mock):
+        await scan_service.verify_job(
+            job.id, "Full page text with the real job description.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] == "onsite"
 
 
 async def test_verify_job_updates_the_same_row_and_scores_above_threshold(temporary_database):
@@ -914,6 +1011,42 @@ async def test_archive_stale_jobs_marks_stale_job_closed(temporary_database, mon
     ]
 
 
+async def test_archive_stale_jobs_lists_unverifiable_jobs_for_confirmation(
+    temporary_database, monkeypatch
+):
+    init_db()
+    job = _stale_job(
+        temporary_database,
+        source="manual",
+        company="Flywheel",
+        title="Backend Engineer",
+        url="https://hiring.example/jobs/7",
+        score=7.5,
+        status="reviewed",
+        found_at=datetime.datetime.now() - datetime.timedelta(days=12, hours=1),
+    )
+
+    async def fake_find(jobs_by_company, scanners, config):
+        return StalenessResult(unverifiable=[job])
+
+    monkeypatch.setattr("moonlighter.discovery.archive.find_stale_jobs", fake_find)
+    result = await archive_stale_jobs(None, None, CONFIG)
+
+    assert result.to_confirm == [
+        {
+            "id": job.id,
+            "score": 7.5,
+            "status": "reviewed",
+            "age_days": 12,
+            "company": "Flywheel",
+            "title": "Backend Engineer",
+            "url": "https://hiring.example/jobs/7",
+        }
+    ]
+    # Never archived by the machine: only the person can say it closed.
+    assert Job.get_by_id(job.id).status == "reviewed"
+
+
 async def test_archive_stale_jobs_reports_failed_companies(temporary_database, monkeypatch):
     init_db()
     _stale_job(temporary_database)
@@ -1028,6 +1161,39 @@ def testformat_archive_result_archived_and_failed():
     formatted = format_archive_result(result)
     assert "1 job(s) archived" in formatted
     assert "Could not check: beta" in formatted
+
+
+def test_format_archive_result_lists_jobs_to_confirm_by_hand():
+    from moonlighter.discovery.archive import ArchiveResult, format_archive_result
+
+    result = ArchiveResult(
+        to_confirm=[
+            {
+                "id": 42,
+                "score": 7.5,
+                "status": "reviewed",
+                "age_days": 12,
+                "company": "Flywheel",
+                "title": "Backend Engineer",
+                "url": "https://hiring.example/jobs/7",
+            },
+            {
+                "id": 43,
+                "score": None,
+                "status": "needs_review",
+                "age_days": None,
+                "company": "Acme",
+                "title": "Engineer",
+                "url": "https://acme.example/1",
+            },
+        ]
+    )
+    formatted = format_archive_result(result)
+    assert "No closed jobs found." in formatted
+    assert "2 job(s) have no listing to check against" in formatted
+    assert "#42 | 7.5 | reviewed | 12d | Flywheel — Backend Engineer" in formatted
+    assert "https://hiring.example/jobs/7" in formatted
+    assert "#43 | — | needs_review | ?d | Acme — Engineer" in formatted
 
 
 # ── Gupy dispatch (portal-wide keyword feed, LinkedIn-model, config-gated) ──

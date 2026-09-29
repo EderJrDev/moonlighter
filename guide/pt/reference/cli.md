@@ -26,6 +26,7 @@ Todo comando `moonlighter-*`, e o `moonlighter doctor`, imprime exatamente um do
 | `moonlighter-email sync` | Classifica respostas recentes e avança candidaturas. Sozinho, ele não alimenta o [banco de respostas](../guides/answer-bank.md); quem faz isso é o `sync_email_responses` do servidor MCP. |
 | `moonlighter-email register JOB_ID` | Marca uma vaga como candidatada à mão e gera o alias de rastreio `+ref` dela, para que as respostas a ela sejam casadas pelo `sync`. |
 | `moonlighter-scan doctor` · `moonlighter-apply doctor` · `moonlighter-email doctor` · `moonlighter doctor` | Onde o estado mora e se a config carrega, em JSON; sai com `1` quando a config está faltando ou é inválida. |
+| `moonlighter-apply doctor --online` | O mesmo, mais uma requisição a cada link do cabeçalho dos seus templates de CV (GitHub, LinkedIn, site); sai com `1` se algum estiver quebrado. Um site que recusa checagem automática (o LinkedIn costuma recusar) aparece com `"ok": null` para você abrir à mão. |
 
 ```sh
 moonlighter-scan --no-eval | jq '.saved[] | select(.status == "needs_review") | .url'

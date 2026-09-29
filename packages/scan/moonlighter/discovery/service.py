@@ -27,7 +27,7 @@ from moonlighter.discovery.evaluator import (
     should_skip_by_title,
 )
 from moonlighter.discovery.results import ScanKind, ScanReport
-from moonlighter.discovery.sources.base import RawJob, ScanStats
+from moonlighter.discovery.sources.base import RawJob, ScanStats, normalize_remote_type
 from moonlighter.discovery.sources.registry import build_http_scanners
 from peewee import IntegrityError
 
@@ -121,7 +121,7 @@ def _persist(raw: RawJob, **scoring: Any) -> Job | None:
 
 
 async def _run_browser_scanner(
-    scanner_cls: type[Any], keywords: str, config: dict[str, Any]
+    scanner_class: type[Any], keywords: str, config: dict[str, Any]
 ) -> tuple[list[RawJob], str | None]:
     """Runs one browser-based scanner plugin (requires prior login, same shape as
     LinkedInScanner). An expired session becomes a warning; any other failure —
@@ -136,11 +136,11 @@ async def _run_browser_scanner(
     except Exception:
         return [], None
     try:
-        jobs = await scanner_cls(page).scan(keywords=keywords)
+        jobs = await scanner_class(page).scan(keywords=keywords)
         return jobs, None
-    except ScannerSessionExpiredError as e:
-        label = scanner_cls.__name__.removesuffix("Scanner")
-        return [], f"⚠️  {label}: {e}"
+    except ScannerSessionExpiredError as error:
+        label = scanner_class.__name__.removesuffix("Scanner")
+        return [], f"⚠️  {label}: {error}"
     except Exception:
         return [], None
     finally:
@@ -174,8 +174,8 @@ async def _collect_raw_jobs(
         if slugs:
             raw_jobs.extend(await scanner.scan(slugs, stats=stats))
 
-    for scanner_cls in discover_entry_points("moonlighter.scanners"):
-        jobs, warning = await _run_browser_scanner(scanner_cls, keywords, config)
+    for scanner_class in discover_entry_points("moonlighter.scanners"):
+        jobs, warning = await _run_browser_scanner(scanner_class, keywords, config)
         raw_jobs.extend(jobs)
         if warning:
             warnings.append(warning)
@@ -186,7 +186,7 @@ async def _collect_raw_jobs(
     raw_jobs.extend(await _scan_wwr(config, stats, keywords))
     raw_jobs.extend(await _scan_hn_whoishiring(config, stats, keywords))
     warnings.extend(_stats_warnings(stats))
-    raw_jobs = [replace(j, url=normalize_job_url(j.url)) for j in raw_jobs]
+    raw_jobs = [replace(raw_job, url=normalize_job_url(raw_job.url)) for raw_job in raw_jobs]
     return raw_jobs, ("\n".join(warnings) or None)
 
 
@@ -205,7 +205,7 @@ async def _scan_gupy(keywords: str, config: dict[str, Any], stats: ScanStats) ->
 def _matches_keywords(title: str, keywords: str) -> bool:
     """Comma-separated terms; a title matches when ANY term is a
     case-insensitive substring. No keywords = everything matches."""
-    terms = [t.strip().lower() for t in keywords.split(",") if t.strip()]
+    terms = [term.strip().lower() for term in keywords.split(",") if term.strip()]
     if not terms:
         return True
     lowered = title.lower()
@@ -222,7 +222,7 @@ async def _scan_remoteok(config: dict[str, Any], stats: ScanStats, keywords: str
     from moonlighter.discovery.sources.http import RemoteOKScanner
 
     jobs = await RemoteOKScanner().scan(stats=stats)
-    return [j for j in jobs if _matches_keywords(j.title, keywords)]
+    return [job for job in jobs if _matches_keywords(job.title, keywords)]
 
 
 async def _scan_remotive(config: dict[str, Any], stats: ScanStats, keywords: str) -> list[RawJob]:
@@ -236,7 +236,7 @@ async def _scan_remotive(config: dict[str, Any], stats: ScanStats, keywords: str
     from moonlighter.discovery.sources.http import RemotiveScanner
 
     jobs = await RemotiveScanner().scan(stats=stats)
-    return [j for j in jobs if _matches_keywords(j.title, keywords)]
+    return [job for job in jobs if _matches_keywords(job.title, keywords)]
 
 
 async def _scan_wwr(config: dict[str, Any], stats: ScanStats, keywords: str) -> list[RawJob]:
@@ -248,7 +248,7 @@ async def _scan_wwr(config: dict[str, Any], stats: ScanStats, keywords: str) -> 
     from moonlighter.discovery.sources.http import WeWorkRemotelyScanner
 
     jobs = await WeWorkRemotelyScanner().scan(stats=stats)
-    return [j for j in jobs if _matches_keywords(j.title, keywords)]
+    return [job for job in jobs if _matches_keywords(job.title, keywords)]
 
 
 async def _scan_hn_whoishiring(
@@ -264,12 +264,12 @@ async def _scan_hn_whoishiring(
     from moonlighter.discovery.sources.http import HNWhoIsHiringScanner
 
     jobs = await HNWhoIsHiringScanner().scan(stats=stats)
-    return [j for j in jobs if _matches_keywords(j.title, keywords)]
+    return [job for job in jobs if _matches_keywords(job.title, keywords)]
 
 
 def _drop_already_seen(raw_jobs: list[RawJob]) -> list[RawJob]:
     seen = {normalize_job_url(row.job_url) for row in ScanLog.select(ScanLog.job_url)}
-    return [j for j in raw_jobs if normalize_job_url(j.url) not in seen]
+    return [raw_job for raw_job in raw_jobs if normalize_job_url(raw_job.url) not in seen]
 
 
 async def _evaluate_and_store(
@@ -347,9 +347,9 @@ async def _evaluate_and_store(
                 # --no-eval: nothing here may cost a token. Park the evaluable
                 # jobs the way a missing description already does, so verify_job
                 # can score them later from a pasted page.
-                for r in to_eval:
+                for raw_job in to_eval:
                     job = _persist(
-                        r,
+                        raw_job,
                         score=None,
                         score_notes="not evaluated (--no-eval)",
                         caveats="[]",
@@ -363,13 +363,13 @@ async def _evaluate_and_store(
                 evals = await evaluate_jobs_batch(
                     [
                         EvalInput(
-                            r.company,
-                            r.title,
-                            r.description or f"{r.title} at {r.company}",
-                            location=r.location,
-                            remote_type=r.remote_type,
+                            raw_job.company,
+                            raw_job.title,
+                            raw_job.description or f"{raw_job.title} at {raw_job.company}",
+                            location=raw_job.location,
+                            remote_type=raw_job.remote_type,
                         )
-                        for r in to_eval
+                        for raw_job in to_eval
                     ],
                     profile,
                     model,
@@ -377,15 +377,15 @@ async def _evaluate_and_store(
                     # closure across the `caller is NO_EVAL` check above.
                     cast(LLMCaller, caller),
                 )
-            except Exception as e:
+            except Exception as error:
                 for raw in to_eval:
                     _release(raw)
-                if is_spend_limit(e):
+                if is_spend_limit(error):
                     record_spend_limit_hit()
                     stop.set()
                     results.append(_StopScan())
                     return results
-                logger.error("scan: unexpected error in batch — %s", e, exc_info=True)
+                logger.error("scan: unexpected error in batch — %s", error, exc_info=True)
                 # Returns results (title-filtered jobs already persisted in this chunk)
                 # instead of propagating — the raw exception would make gather() discard
                 # the whole chunk from the report, undercounting jobs already saved in the DB.
@@ -408,7 +408,7 @@ async def _evaluate_and_store(
                     results.append(job)
             return results
 
-    chunks = [new_jobs[i : i + batch_size] for i in range(0, len(new_jobs), batch_size)]
+    chunks = [new_jobs[start : start + batch_size] for start in range(0, len(new_jobs), batch_size)]
     chunk_outcomes = await asyncio.gather(*map(evaluate_chunk, chunks), return_exceptions=True)
 
     saved: list[Job] = []
@@ -435,18 +435,18 @@ def _stats_warnings(stats: ScanStats) -> list[str]:
     GraphQL API produced for weeks (HTTP 200, error payload, zero jobs). A
     healthy source adds nothing."""
     lines: list[str] = []
-    for source, s in sorted(stats.items()):
-        if s.errors == 0 and s.jobs > 0:
+    for source, source_stats in sorted(stats.items()):
+        if source_stats.errors == 0 and source_stats.jobs > 0:
             continue
         scope = ""
-        if s.companies:
-            company_word = "company" if s.companies == 1 else "companies"
-            scope = f" from {s.companies} {company_word}"
-        errs = ""
-        if s.errors:
-            error_word = "error" if s.errors == 1 else "errors"
-            errs = f" ({s.errors} fetch {error_word})"
-        lines.append(f"⚠️  {source}: {s.jobs} jobs{scope}{errs}")
+        if source_stats.companies:
+            company_word = "company" if source_stats.companies == 1 else "companies"
+            scope = f" from {source_stats.companies} {company_word}"
+        error_suffix = ""
+        if source_stats.errors:
+            error_word = "error" if source_stats.errors == 1 else "errors"
+            error_suffix = f" ({source_stats.errors} fetch {error_word})"
+        lines.append(f"⚠️  {source}: {source_stats.jobs} jobs{scope}{error_suffix}")
     return lines
 
 
@@ -500,7 +500,7 @@ async def scan_company(
         )
     stats: ScanStats = {}
     raw_jobs = await scanners[source].scan([company], stats=stats)
-    raw_jobs = [replace(j, url=normalize_job_url(j.url)) for j in raw_jobs]
+    raw_jobs = [replace(raw_job, url=normalize_job_url(raw_job.url)) for raw_job in raw_jobs]
     new_jobs = _drop_already_seen(raw_jobs)
     tip = (
         f"Tip: add {company!r} under '{source}:' in company_list.yaml "
@@ -547,12 +547,18 @@ async def add_job(
     caller: LLMCaller,
 ) -> str:
     url = normalize_job_url(url)
-    if not description or not company or not title:
-        posting = await fetch_posting_via_ats(url)
-        if posting is not None:
-            company = company or posting.company or ""
-            title = title or posting.title or ""
-            description = description or posting.description or ""
+    location: str | None = None
+    remote_type: str | None = None
+    # Always asked, even when every field was given: the ATS API is where the
+    # structured location comes from, and the evaluator's regional filter needs
+    # it. What the person gave still wins over the API's copy.
+    posting = await fetch_posting_via_ats(url)
+    if posting is not None:
+        company = company or posting.company or ""
+        title = title or posting.title or ""
+        description = description or posting.description or ""
+        location = posting.location
+        remote_type = "remote" if posting.remote else normalize_remote_type(location)
     if not description:
         fetched, error = await fetch_description(url)
         if error:
@@ -572,6 +578,8 @@ async def add_job(
             title,
             url,
             description,
+            location=location,
+            remote_type=remote_type,
             score=0.0,
             score_notes=f"title filtered: {matched!r}",
             caveats="[]",
@@ -587,6 +595,8 @@ async def add_job(
         profile=profile,
         model=_model_for(config),
         _caller=caller,
+        location=location,
+        remote_type=remote_type,
     )
     status = "new" if result.score >= threshold else "archived"
     job = _persist_manual(
@@ -594,6 +604,8 @@ async def add_job(
         title,
         url,
         description,
+        location=location,
+        remote_type=remote_type,
         score=result.score,
         score_notes=result.score_notes,
         caveats=json.dumps(result.caveats),
@@ -638,6 +650,8 @@ async def verify_job(
         profile=profile,
         model=_model_for(config),
         _caller=caller,
+        location=job.location,
+        remote_type=job.remote_type,
     )
     status = "new" if result.score >= threshold else "archived"
     job.description = page_text
@@ -661,23 +675,32 @@ def _existing_job_message(url: str) -> str | None:
         job = Job.get(Job.url == url)
     except Job.DoesNotExist:
         return None
-    score_str = f"{job.score:.1f}" if job.score is not None else "—"
+    score_text = f"{job.score:.1f}" if job.score is not None else "—"
     hint = (
         " Use verify_job(job_id, page_text) to score it from the real page."
         if job.status == "needs_review"
         else ""
     )
     return (
-        f"Job already in the database (id={job.id}, score={score_str}, status={job.status}).{hint}"
+        f"Job already in the database (id={job.id}, score={score_text}, status={job.status}).{hint}"
     )
 
 
 def _persist_manual(
-    company: str, title: str, url: str, description: str, **scoring: Any
+    company: str,
+    title: str,
+    url: str,
+    description: str,
+    *,
+    location: str | None,
+    remote_type: str | None,
+    **scoring: Any,
 ) -> Job | None:
     """Saves a manual job (source='manual') + the claim in ScanLog. None if the URL
     already exists (race/conflict)."""
-    job = _create_job("manual", company, title, url, None, None, description, None, **scoring)
+    job = _create_job(
+        "manual", company, title, url, location, remote_type, description, None, **scoring
+    )
     if job is not None:
         try:
             ScanLog.create(job_url=url, source="manual")
@@ -690,11 +713,13 @@ def _format_add_result(
     job: Job, company: str, title: str, result: Any, threshold: float, status: str
 ) -> str:
     icon = "✓ NEW" if status == "new" else "archived"
-    caveats_str = "\n".join(f"  ⚠ {c}" for c in result.caveats) if result.caveats else "  none"
+    caveats_text = (
+        "\n".join(f"  ⚠ {caveat}" for caveat in result.caveats) if result.caveats else "  none"
+    )
     return (
         f"{icon} — {company} / {title}\n"
         f"Score: {result.score:.1f}/10  (threshold: {threshold})\n"
         f"Notes: {result.score_notes}\n"
-        f"Caveats:\n{caveats_str}\n"
+        f"Caveats:\n{caveats_text}\n"
         f"id={job.id}"
     )

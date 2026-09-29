@@ -1,7 +1,12 @@
 import json
 
 import pytest
-from moonlighter.application.cvgen.generate import MAX_BULLETS, MAX_OPEN_SOURCE, USE_BASE, decide_cv
+from moonlighter.application.cvgen.generate import (
+    MAXIMUM_BULLETS,
+    MAXIMUM_OPEN_SOURCE,
+    USE_BASE,
+    decide_cv,
+)
 from moonlighter.application.cvgen.pool import CVPool, PoolBullet, PoolExperience
 from moonlighter.application.cvgen.render import render_cv
 
@@ -82,6 +87,18 @@ async def test_unrecognized_decision_degrades_to_none():
 
 
 @pytest.mark.asyncio
+async def test_prompt_forbids_claims_the_profile_skills_deny():
+    """2026-09-24: the tailored summary claimed "production web applications with
+    Python" while the profile's skills said no Python in production. The skills
+    notes must reach the prompt, and the prompt must treat them as limits."""
+    profile = {**PROFILE, "skills": [{"name": "Python", "notes": "studied, never in production"}]}
+    call, calls = _caller(json.dumps({"decision": "USE_BASE"}))
+    await decide_cv(JOB, POOL, profile, "base sum", "base te", call)
+    assert "never in production" in calls["prefix"]
+    assert "a claim the profile denies" in calls["prefix"]
+
+
+@pytest.mark.asyncio
 async def test_prompt_carries_pool_ids_base_summary_and_untrusted_posting():
     call, calls = _caller(json.dumps({"decision": "USE_BASE"}))
     await decide_cv(JOB, POOL, PROFILE, "base sum", "base te", call)
@@ -98,7 +115,7 @@ async def test_prompt_carries_pool_ids_base_summary_and_untrusted_posting():
 
 @pytest.mark.asyncio
 async def test_pt_language_carries_translations():
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "pt",
@@ -109,7 +126,7 @@ async def test_pt_language_carries_translations():
             "bullets_translated": {"t-a": "Fiz A", "ghost": "x"},
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     sel = await decide_cv(JOB, POOL, PROFILE, "b", "b", call)
     assert sel.language == "pt"
     assert sel.translations == {"t-a": "Fiz A"}  # ghost filtered here too
@@ -140,7 +157,7 @@ async def test_a_blank_summary_falls_back_to_the_base_when_one_exists():
     # is_typesettable("") is True — the allow-list regex matches empty — so
     # without an explicit emptiness check this would pass through unchanged
     # and the CV would render with a blank %%SUMMARY%% section.
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -150,14 +167,14 @@ async def test_a_blank_summary_falls_back_to_the_base_when_one_exists():
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     sel = await decide_cv(JOB, POOL, PROFILE, "base summary text", "b", call)
     assert sel is not None
     assert sel.summary == "base summary text"
 
 
 async def test_a_blank_expertise_with_no_base_degrades_to_none():
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -167,12 +184,12 @@ async def test_a_blank_expertise_with_no_base_degrades_to_none():
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     assert await decide_cv(JOB, POOL, PROFILE, "b", "", call) is None
 
 
 async def test_operator_directed_summary_degrades_to_none():
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -182,7 +199,7 @@ async def test_operator_directed_summary_degrades_to_none():
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     assert await decide_cv(JOB, POOL, PROFILE, "b", "b", call) is None
 
 
@@ -260,7 +277,7 @@ async def test_all_three_translation_paths_are_escaped():
     # Bullet, prose entry and open-source item all go through _bullet_text; a
     # fix reconciling only one is how the last silent regression happened.
     poisoned = "^^5cinput{/etc/passwd}"
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "pt",
@@ -275,7 +292,7 @@ async def test_all_three_translation_paths_are_escaped():
             },
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     sel = await decide_cv(JOB, POOL, PROFILE, "b", "b", call)
     tex = render_cv(TEMPLATE, sel, POOL)
     assert "^^" not in tex and "\\input" not in tex
@@ -327,9 +344,9 @@ async def test_a_wrong_typed_field_degrades_instead_of_raising(override, field, 
     # just its words. decide_cv raising here means prepare_application answers
     # with a traceback line instead of the whole sheet — the operator loses the
     # application, not just the tailored CV.
-    resp = json.loads(_pt_response("Fiz C"))
-    resp.update(override)
-    call, _ = _caller(json.dumps(resp))
+    response = json.loads(_pt_response("Fiz C"))
+    response.update(override)
+    call, _ = _caller(json.dumps(response))
     sel = await decide_cv(JOB, POOL, PROFILE, "b", "b", call)
     assert sel is not None and getattr(sel, field) == expected
     render_cv(TEMPLATE, sel, POOL)  # and the render still works on it
@@ -346,7 +363,7 @@ async def test_an_operator_directed_translation_is_dropped():
 
 @pytest.mark.asyncio
 async def test_operator_directed_expertise_degrades_to_none():
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -356,7 +373,7 @@ async def test_operator_directed_expertise_degrades_to_none():
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     assert await decide_cv(JOB, POOL, PROFILE, "b", "b", call) is None
 
 
@@ -367,7 +384,9 @@ WIDE_POOL = CVPool(
             title="Dev",
             period="2023 -- 2026",
             location="BH",
-            bullets=tuple(PoolBullet(f"b-{i}", ("backend",), f"B{i}") for i in range(12)),
+            bullets=tuple(
+                PoolBullet(f"b-{index}", ("backend",), f"B{index}") for index in range(12)
+            ),
             prose=None,
             prose_id=None,
             angles=(),
@@ -384,14 +403,14 @@ async def test_prompt_states_the_one_page_budget_and_the_latin_rule():
     call, calls = _caller(json.dumps({"decision": "USE_BASE"}))
     await decide_cv(JOB, POOL, PROFILE, "b", "b", call)
     assert "one page" in calls["prefix"]
-    assert f"at most {MAX_BULLETS}" in calls["prefix"]
+    assert f"at most {MAXIMUM_BULLETS}" in calls["prefix"]
     assert "no emoji" in calls["prefix"]
 
 
 @pytest.mark.asyncio
 async def test_bullets_are_capped_in_the_models_order_and_prose_ids_do_not_count():
-    ids = [f"b-{i}" for i in range(12)]
-    resp = json.dumps(
+    ids = [f"b-{index}" for index in range(12)]
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -401,16 +420,16 @@ async def test_bullets_are_capped_in_the_models_order_and_prose_ids_do_not_count
             "open_source": ["oss-2", "oss-1"],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     sel = await decide_cv(JOB, WIDE_POOL, PROFILE, "b", "b", call)
-    assert sel.bullets == ("trybe-prose", *ids[:MAX_BULLETS])
+    assert sel.bullets == ("trybe-prose", *ids[:MAXIMUM_BULLETS])
     assert sel.open_source == ("oss-2",)
-    assert MAX_OPEN_SOURCE == 1
+    assert MAXIMUM_OPEN_SOURCE == 1
 
 
 @pytest.mark.asyncio
 async def test_a_summary_outside_the_latin_allow_list_falls_back_to_the_base_summary(caplog):
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -420,11 +439,11 @@ async def test_a_summary_outside_the_latin_allow_list_falls_back_to_the_base_sum
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     sel = await decide_cv(JOB, POOL, PROFILE, "base sum", "base te", call)
     assert sel.summary == "base sum"
     assert sel.technical_expertise == "base te"
-    assert any("Latin" in r.message for r in caplog.records)
+    assert any("Latin" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -440,7 +459,7 @@ async def test_a_translation_outside_the_latin_allow_list_is_dropped_not_strippe
 @pytest.mark.asyncio
 async def test_a_rejected_summary_with_no_base_text_degrades_to_none():
     # A template without %%BASE_SUMMARY has nothing curated to fall back to.
-    resp = json.dumps(
+    response = json.dumps(
         {
             "decision": "GENERATE",
             "language": "en",
@@ -450,5 +469,5 @@ async def test_a_rejected_summary_with_no_base_text_degrades_to_none():
             "open_source": [],
         }
     )
-    call, _ = _caller(resp)
+    call, _ = _caller(response)
     assert await decide_cv(JOB, POOL, PROFILE, "", "base te", call) is None

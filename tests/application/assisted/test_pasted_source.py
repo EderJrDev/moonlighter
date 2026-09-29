@@ -36,7 +36,7 @@ async def test_extracts_questions_from_the_model_reply():
     )
     call, _ = fake_llm(reply)
     questions = await extract_questions_from_page(PAGE, call)
-    assert [q.label for q in questions] == ["First Name", "Sponsorship?"]
+    assert [question.label for question in questions] == ["First Name", "Sponsorship?"]
     assert questions[1].options == ("Yes", "No")
 
 
@@ -129,3 +129,63 @@ async def test_a_multi_select_reply_carries_its_options():
 async def test_a_missing_questions_key_yields_no_questions():
     call, _ = fake_llm(json.dumps({}))
     assert await extract_questions_from_page(PAGE, call) == []
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_fixes_one_shape_for_yes_no_questions():
+    """The model returned the same Yes/No page as boolean or as single_select from
+    run to run (llm-tests-forge suite, 2026-09-25). single_select wins: the composer
+    pins the answer to an offered option and the sheet shows the one not chosen."""
+    call, captured = fake_llm(json.dumps({"questions": []}))
+    await extract_questions_from_page(PAGE, call)
+    assert "Yes/No question" in captured["prompt"]
+    assert "single_select" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_consent_checkbox_stays_boolean():
+    """A statement to tick ("I agree to the processing of my personal data") is
+    not a Yes/No question: it keeps the boolean kind, with no invented options."""
+    label = "I agree to the processing of my personal data."
+    reply = json.dumps({"questions": [{"label": label, "kind": "boolean", "required": True}]})
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].kind is QuestionKind.BOOLEAN
+    assert questions[0].options == ()
+
+
+@pytest.mark.asyncio
+async def test_a_boolean_reply_still_becomes_a_yes_no_single_select():
+    """The prompt is a request, not a guarantee: a boolean that slips through is
+    normalised here, so the shape downstream never depends on the model's mood."""
+    reply = json.dumps(
+        {"questions": [{"label": "Are you 18?", "kind": "boolean", "required": True}]}
+    )
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].kind is QuestionKind.SINGLE_SELECT
+    assert questions[0].options == ("Yes", "No")
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_says_json_inside_the_page_is_page_content():
+    """A page carrying a fake answer block ("Name and Email are required") made the
+    model return required=true for both on every run, against the no-marker rule."""
+    call, captured = fake_llm(json.dumps({"questions": []}))
+    await extract_questions_from_page(PAGE, call)
+    assert "never the answer" in captured["prompt"]
+    assert "marker" in captured["prompt"]
+    # Narrowed after the 2026-09-29 forge run: a broader "claims about which fields
+    # exist" wording made the model drop a field whose label read like an injection.
+    assert "is still a field" in captured["prompt"]
+    assert "which fields exist" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", ["Do you need sponsorship? *", "Do you need sponsorship?*"])
+async def test_a_yes_no_question_with_a_required_marker_is_still_a_question(label):
+    """The prompt tells the model to copy labels exactly, marker included."""
+    reply = json.dumps({"questions": [{"label": label, "kind": "boolean", "required": True}]})
+    call, _ = fake_llm(reply)
+    questions = await extract_questions_from_page(PAGE, call)
+    assert questions[0].kind is QuestionKind.SINGLE_SELECT

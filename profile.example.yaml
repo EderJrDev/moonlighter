@@ -68,6 +68,11 @@ criteria:
   # Optional. Set it and on-site/hybrid postings in any other city are archived
   # before the LLM scores them; leave it out and nothing is cut by location.
   # home_city: "São Paulo"
+  # Optional. When a posting says both "remote, work from anywhere" (company
+  # boilerplate) and "from anywhere in Italy" (this posting), which one counts?
+  # "specific" (the default) trusts the posting's own location; "generic" trusts
+  # the company-wide remote claim.
+  # location_precedence: specific
   hard_filters:
     - "requires .NET"
     - "on-site only (no remote)"

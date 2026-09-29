@@ -87,11 +87,15 @@ async def test_scanner_malformed_response_marks_company_failed():
     assert result.failed_companies == ["acme"]
 
 
-async def test_unsupported_source_marks_company_failed():
+async def test_unsupported_source_reports_each_job_for_a_human_to_confirm():
+    """A manual job has no listing to diff against: the person checks the link
+    (Alberto's rule, 2026-08-24) — a company name alone gave them nothing to open."""
     job = _job(source="manual", company="somewhere", url="https://x.com/1")
     result = await find_stale_jobs({("manual", "somewhere"): [job]}, {}, CONFIG)
     assert result.stale == []
-    assert result.failed_companies == ["somewhere (source 'manual' has no listing check)"]
+    assert result.stale_by_age == []
+    assert result.unverifiable == [job]
+    assert result.failed_companies == []
 
 
 async def test_registered_checker_plugin_is_called_for_its_source():
@@ -111,14 +115,15 @@ async def test_registered_checker_plugin_is_called_for_its_source():
 
 
 async def test_no_registered_checker_falls_through_to_no_listing_check():
-    """Same as test_unsupported_source_marks_company_failed but explicit about
+    """Same as test_unsupported_source_reports_each_job_for_a_human_to_confirm but explicit about
     the "no plugin installed for this source" case — the steady state for the
     public repo alone, with no private checker plugin present."""
     job = _job(source="acme_ats", company="acme", url="https://acme-ats.example/jobs/1")
     with patch("moonlighter.discovery.staleness.discover_entry_points_by_name", return_value={}):
         result = await find_stale_jobs({("acme_ats", "acme"): [job]}, {}, CONFIG)
     assert result.stale == []
-    assert result.failed_companies == ["acme (source 'acme_ats' has no listing check)"]
+    assert result.unverifiable == [job]
+    assert result.failed_companies == []
 
 
 async def test_checker_plugin_exception_marks_company_failed_not_stale():
@@ -222,10 +227,10 @@ class _FetchFailingScanner:
     """Shaped like every _gather_jobs-backed scanner: no exception, [] back,
     the failure visible only through the stats dict."""
 
-    async def scan(self, company_slugs, **kwargs):
+    async def scan(self, company_slugs, **keyword_arguments):
         from moonlighter.discovery.sources.base import SourceStats
 
-        stats = kwargs.get("stats")
+        stats = keyword_arguments.get("stats")
         if stats is not None:
             stats["greenhouse"] = SourceStats(companies=len(company_slugs), jobs=0, errors=1)
         return []
