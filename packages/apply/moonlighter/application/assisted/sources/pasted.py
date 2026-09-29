@@ -6,6 +6,7 @@ attacker-controlled, so it is wrapped as untrusted data.
 """
 
 import logging
+import re
 from typing import Any
 
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
@@ -36,7 +37,8 @@ Return JSON and nothing else:
 ]}}
 
 Rules:
-- Copy each label exactly as it appears. Do not rephrase it.
+- Copy each label exactly as it appears, without its required or optional marker
+  ("*", "(required)", "(obrigatório)", "(optional)", "(opcional)"). Do not rephrase it.
 - Give options only for select questions, copied verbatim.
 - A Yes/No question is a single_select whose options are the two answers as the
   page shows them ("Yes"/"No", "Sim"/"Não", "Oui"/"Non"...). boolean is only for a
@@ -55,6 +57,27 @@ Rules:
 # single_select pins the answer to an offered option and shows the one not chosen
 # on the sheet (2026-09-29). A statement to tick (consent) stays boolean.
 _YES_NO = ("Yes", "No")
+
+
+# The label is the question; whether it is required travels in `required`
+# (decided 2026-09-29). A marker sits on a line of its own before the label
+# (Workable's "*\nFirst name") or after it, possibly after the "?".
+_MARKER_LINE = re.compile(r"[*†‡]+")
+_TRAILING_MARKER = re.compile(
+    r"\s*(?:[*†‡]+|\((?:required|obrigat[óo]rio|optional|opcional)\))\s*$", re.IGNORECASE
+)
+
+
+def _clean_label(raw: Any) -> str:
+    lines = str(raw).strip().split("\n")
+    while lines and _MARKER_LINE.fullmatch(lines[0].strip()):
+        lines = lines[1:]
+    label = "\n".join(lines).strip()
+    previous = None
+    while previous != label:
+        previous = label
+        label = _TRAILING_MARKER.sub("", label)
+    return label
 
 
 def _kind(raw: Any, options: tuple[str, ...]) -> QuestionKind:
@@ -94,12 +117,12 @@ async def extract_questions_from_page(
     for item in payload.get("questions") or []:
         if not isinstance(item, dict):
             continue
-        label = item.get("label")
+        label = _clean_label(item.get("label") or "")
         if not label:
             continue
         options = tuple(str(option) for option in item.get("options") or [])
         # The label is copied exactly, so a required marker may trail the "?".
-        is_question = str(label).rstrip(" *†‡").endswith("?")
+        is_question = label.endswith("?")
         if str(item.get("kind")) == QuestionKind.BOOLEAN.value and is_question:
             item_kind: Any = QuestionKind.SINGLE_SELECT.value
             options = options or _YES_NO
@@ -108,7 +131,7 @@ async def extract_questions_from_page(
         kind = _kind(item_kind, options)
         questions.append(
             FormQuestion(
-                label=str(label),
+                label=label,
                 kind=kind,
                 required=bool(item.get("required")),
                 options=options if kind in _CHOICE_KINDS else (),
