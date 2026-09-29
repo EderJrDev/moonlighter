@@ -12,7 +12,7 @@ O servidor MCP `moonlighter` expõe 17 ferramentas. Você raramente as chama pel
 | `scan_company` | Escaneia agora o portal de uma empresa e dá nota às vagas novas, sem editar o `company_list.yaml` |
 | `add_job` | Adiciona uma vaga à mão, pela URL |
 | `verify_job` | Dá nota a uma vaga deixada como `needs_review` (descrição vazia), a partir do texto que você copia da página da vaga |
-| `archive_stale_jobs` | Arquiva vagas que sumiram da fonte; uma empresa cuja checagem falha é reportada e fica intocada |
+| `archive_stale_jobs` | Arquiva vagas que sumiram da fonte; uma empresa cuja checagem falha é reportada e fica intocada, e uma vaga adicionada por URL (sem listagem para conferir) aparece com o link para você confirmar |
 
 ## Navegar pelo pipeline
 

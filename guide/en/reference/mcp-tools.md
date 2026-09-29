@@ -12,7 +12,7 @@ The `moonlighter` MCP server exposes 17 tools. You rarely call them by name: ask
 | `scan_company` | Scan one company's board right now and score the new postings, without editing `company_list.yaml` |
 | `add_job` | Manually add a job by URL |
 | `verify_job` | Score a job left as `needs_review` (empty description), from page text you copy off the posting |
-| `archive_stale_jobs` | Archive jobs that disappeared from their source; a company whose check fails is reported and left untouched |
+| `archive_stale_jobs` | Archive jobs that disappeared from their source; a company whose check fails is reported and left untouched, and a job added by URL (no listing to check) is listed with its link for you to confirm |
 
 ## Browse the pipeline
 

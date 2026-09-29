@@ -205,7 +205,9 @@ async def archive_stale_jobs(
     Checks jobs currently in new/reviewed/applying/needs_review against the source's
     current listing (Greenhouse/Lever/Ashby API, or a LinkedIn page revisit). A company
     whose check fails (network error, malformed response) is reported explicitly and left
-    untouched — never silently archived by mistake.
+    untouched — never silently archived by mistake. A job with no listing to compare
+    against (added by URL, source='manual') is listed with its link for the person to
+    confirm by hand, and is never archived.
 
     Args:
         job_id: check only this job (mutually exclusive with company).

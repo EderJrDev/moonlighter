@@ -274,6 +274,7 @@ def test_scan_report_to_dict_is_json_serialisable_and_carries_the_facts(three_jo
         "aged": [],
         "max_age_days": 30,
         "failed_companies": [],
+        "to_confirm": [],
     }
     assert payload["stats"] == {"greenhouse": {"companies": 3, "jobs": 2, "errors": 1}}
     assert payload["warning"] == "⚠️  greenhouse: 0 jobs"

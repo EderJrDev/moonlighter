@@ -6,6 +6,7 @@ config/profile/caller logic, without depending on the global config loaded on im
 """
 
 import asyncio
+import datetime
 from typing import ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -984,6 +985,42 @@ async def test_archive_stale_jobs_marks_stale_job_closed(temporary_database, mon
     ]
 
 
+async def test_archive_stale_jobs_lists_unverifiable_jobs_for_confirmation(
+    temporary_database, monkeypatch
+):
+    init_db()
+    job = _stale_job(
+        temporary_database,
+        source="manual",
+        company="Flywheel",
+        title="Backend Engineer",
+        url="https://hiring.example/jobs/7",
+        score=7.5,
+        status="reviewed",
+        found_at=datetime.datetime.now() - datetime.timedelta(days=12, hours=1),
+    )
+
+    async def fake_find(jobs_by_company, scanners, config):
+        return StalenessResult(unverifiable=[job])
+
+    monkeypatch.setattr("moonlighter.discovery.archive.find_stale_jobs", fake_find)
+    result = await archive_stale_jobs(None, None, CONFIG)
+
+    assert result.to_confirm == [
+        {
+            "id": job.id,
+            "score": 7.5,
+            "status": "reviewed",
+            "age_days": 12,
+            "company": "Flywheel",
+            "title": "Backend Engineer",
+            "url": "https://hiring.example/jobs/7",
+        }
+    ]
+    # Never archived by the machine: only the person can say it closed.
+    assert Job.get_by_id(job.id).status == "reviewed"
+
+
 async def test_archive_stale_jobs_reports_failed_companies(temporary_database, monkeypatch):
     init_db()
     _stale_job(temporary_database)
@@ -1098,6 +1135,39 @@ def testformat_archive_result_archived_and_failed():
     formatted = format_archive_result(result)
     assert "1 job(s) archived" in formatted
     assert "Could not check: beta" in formatted
+
+
+def test_format_archive_result_lists_jobs_to_confirm_by_hand():
+    from moonlighter.discovery.archive import ArchiveResult, format_archive_result
+
+    result = ArchiveResult(
+        to_confirm=[
+            {
+                "id": 42,
+                "score": 7.5,
+                "status": "reviewed",
+                "age_days": 12,
+                "company": "Flywheel",
+                "title": "Backend Engineer",
+                "url": "https://hiring.example/jobs/7",
+            },
+            {
+                "id": 43,
+                "score": None,
+                "status": "needs_review",
+                "age_days": None,
+                "company": "Acme",
+                "title": "Engineer",
+                "url": "https://acme.example/1",
+            },
+        ]
+    )
+    formatted = format_archive_result(result)
+    assert "No closed jobs found." in formatted
+    assert "2 job(s) have no listing to check against" in formatted
+    assert "#42 | 7.5 | reviewed | 12d | Flywheel — Backend Engineer" in formatted
+    assert "https://hiring.example/jobs/7" in formatted
+    assert "#43 | — | needs_review | ?d | Acme — Engineer" in formatted
 
 
 # ── Gupy dispatch (portal-wide keyword feed, LinkedIn-model, config-gated) ──
