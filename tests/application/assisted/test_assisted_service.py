@@ -355,6 +355,26 @@ async def test_paste_with_no_recognisable_questions_says_so(job_factory, monkeyp
     assert "No questions could be found" in out
 
 
+async def test_paste_whose_reading_failed_says_so_instead_of_blaming_the_paste(
+    job_factory, monkeypatch
+):
+    """An unparseable model reply used to surface as "Was the whole page copied?"."""
+    from moonlighter.application.assisted.sources.pasted import ExtractionError
+
+    job = job_factory(source="smartrecruiters", url="https://jobs.smartrecruiters.com/x/y")
+    _bypass_cv_bootstrap_offer()
+
+    async def failed_extraction(page_text: str, llm_caller: Any) -> list[FormQuestion]:
+        raise ExtractionError("the model's reply was not JSON: sorry")
+
+    monkeypatch.setattr(service, "extract_questions_from_page", failed_extraction)
+    out = render_sheet_result(
+        await service.prepare_application_from_paste(job.id, "the whole copied page", {}, {})
+    )
+    assert "Was the whole page copied" not in out
+    assert "run it again" in out
+
+
 async def _empty_extraction(page_text: str, llm_caller: Any) -> list[FormQuestion]:
     return []
 

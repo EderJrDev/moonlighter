@@ -5,15 +5,12 @@ careers site, and on anything the two supported APIs do not cover. The text is
 attacker-controlled, so it is wrapped as untrusted data.
 """
 
-import logging
 import re
 from typing import Any
 
 from moonlighter.application.assisted.questions import FormQuestion, QuestionKind
 from moonlighter.core.llm import LLMCaller
 from moonlighter.core.parsing import parse_llm_json, wrap_untrusted
-
-logger = logging.getLogger(__name__)
 
 _CHOICE_KINDS = frozenset({QuestionKind.SINGLE_SELECT, QuestionKind.MULTI_SELECT})
 
@@ -42,6 +39,10 @@ Rules:
   A label that spans several lines or paragraphs is copied whole, line breaks
   included — never only its first line or paragraph.
 - Give options only for select questions, copied verbatim.
+- An open question that asks the candidate to describe, explain or tell something
+  in their own words ("Tell us why...", "Describe...", "Cover letter") is
+  long_text. text is for a short factual answer: a name, an email, a city, a
+  URL, a number.
 - A searchable dropdown or combobox shows only a search or select placeholder
   ("Search...", "Select an option...", "Buscar cidade...", "Rechercher...") and
   none of its options: it is a single_select with options [], never text. A
@@ -88,6 +89,12 @@ def _clean_label(raw: Any) -> str:
     return label
 
 
+class ExtractionError(RuntimeError):
+    """The model's reading of the page could not be used. Distinct from an empty
+    list, which means the page has no questions: returning [] here told the
+    person to re-copy a page that was fine (forge run, 2026-09-29)."""
+
+
 def _kind(raw: Any, options: tuple[str, ...]) -> QuestionKind:
     """LONG_TEXT, not TEXT, is the fallback for a kind we could not read.
 
@@ -115,11 +122,10 @@ async def extract_questions_from_page(
     raw = await llm_caller(prompt, model)
     try:
         payload = parse_llm_json(raw)
-    except Exception:
-        logger.warning("could not parse the extracted questions")
-        return []
+    except Exception as error:
+        raise ExtractionError(f"the model's reply was not JSON: {raw[:300]!r}") from error
     if not isinstance(payload, dict):
-        return []
+        raise ExtractionError(f"the model's reply was not a JSON object: {raw[:300]!r}")
 
     questions: list[FormQuestion] = []
     for item in payload.get("questions") or []:
