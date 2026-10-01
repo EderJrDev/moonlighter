@@ -17,7 +17,7 @@ from typing import Any
 
 from moonlighter.application.answers.profile import profile_for_answers
 from moonlighter.application.cvgen.compile import compile_pdf
-from moonlighter.application.cvgen.generate import MAX_BULLETS, MAX_OPEN_SOURCE
+from moonlighter.application.cvgen.generate import MAXIMUM_BULLETS, MAXIMUM_OPEN_SOURCE
 from moonlighter.application.cvgen.pool import (
     CVPool,
     PoolBullet,
@@ -102,10 +102,10 @@ def _dedupe_id(candidate: str, seen: set[str]) -> str:
     if candidate not in seen:
         seen.add(candidate)
         return candidate
-    n = 2
-    while f"{candidate}-{n}" in seen:
-        n += 1
-    deduped = f"{candidate}-{n}"
+    suffix = 2
+    while f"{candidate}-{suffix}" in seen:
+        suffix += 1
+    deduped = f"{candidate}-{suffix}"
     seen.add(deduped)
     return deduped
 
@@ -123,7 +123,7 @@ def _bullet_from_raw(raw: Any, seen_ids: set[str]) -> PoolBullet | None:
     if not latex:
         return None
     raw_id = str(raw.get("id") or "bullet")
-    angles = tuple(str(a) for a in raw.get("angles") or ())
+    angles = tuple(str(angle) for angle in raw.get("angles") or ())
     return PoolBullet(id=_dedupe_id(raw_id, seen_ids), angles=angles, latex=latex)
 
 
@@ -133,9 +133,11 @@ def _experience_from_raw(
     if not isinstance(raw, dict) or not raw.get("company"):
         return None
     bullets = tuple(
-        b
-        for b in (_bullet_from_raw(r, seen_ids) for r in raw.get("bullets") or [])
-        if b is not None
+        bullet
+        for bullet in (
+            _bullet_from_raw(raw_bullet, seen_ids) for raw_bullet in raw.get("bullets") or []
+        )
+        if bullet is not None
     )
     if not bullets:
         return None
@@ -156,34 +158,38 @@ async def draft_pool(profile: dict[str, Any], caller: LLMCaller) -> CVPool:
         raise BootstrapError("the profile has no experience entries to draft a CV pool from")
     try:
         raw_response = await caller(_prefix(profile), "claude-sonnet-4-6")
-    except Exception as e:
-        if is_spend_limit(e):
+    except Exception as error:
+        if is_spend_limit(error):
             raise  # the caller decides whether to retry later, same as everywhere else
-        raise BootstrapError(f"the CV-pool drafting call failed: {e}") from e
+        raise BootstrapError(f"the CV-pool drafting call failed: {error}") from error
     try:
         data = parse_llm_json(raw_response)
-    except Exception as e:
-        raise BootstrapError(f"the model's response could not be parsed as JSON: {e}") from e
+    except Exception as error:
+        raise BootstrapError(
+            f"the model's response could not be parsed as JSON: {error}"
+        ) from error
     if not isinstance(data, dict) or not data.get("experiences"):
         raise BootstrapError("the model's response could not be parsed into a CV pool")
 
     default_location = str(profile.get("location") or "")
     seen_ids: set[str] = set()
     experiences = tuple(
-        e
-        for e in (
+        experience
+        for experience in (
             _experience_from_raw(raw, default_location, seen_ids) for raw in data["experiences"]
         )
-        if e is not None
+        if experience is not None
     )
     if not experiences:
         raise BootstrapError("no usable experience entries survived drafting")
     open_source = tuple(
-        b
-        for b in (_bullet_from_raw(r, seen_ids) for r in data.get("open_source") or [])
-        if b is not None
+        bullet
+        for bullet in (
+            _bullet_from_raw(raw_bullet, seen_ids) for raw_bullet in data.get("open_source") or []
+        )
+        if bullet is not None
     )
-    summary_facts = tuple(str(f) for f in data.get("summary_facts") or [])
+    summary_facts = tuple(str(fact) for fact in data.get("summary_facts") or [])
     return CVPool(experiences=experiences, open_source=open_source, summary_facts=summary_facts)
 
 
@@ -213,9 +219,9 @@ def _split_name(name: str) -> tuple[str, str]:
 
 
 def _linkedin_username(url: str) -> str:
-    m = _LINKEDIN_USERNAME.search(url)
-    if m is not None:
-        return m.group(1)
+    match = _LINKEDIN_USERNAME.search(url)
+    if match is not None:
+        return match.group(1)
     if url.strip():
         logger.warning(
             "bootstrap: profile.yaml's linkedin value is not a recognizable profile URL "
@@ -232,12 +238,12 @@ def _education_block(entries: list[Any]) -> str:
     # every field goes through escape_latex exactly like the contact fields
     # below.
     lines = []
-    for e in entries:
-        if not isinstance(e, dict):
+    for entry in entries:
+        if not isinstance(entry, dict):
             continue
-        year = escape_latex(str(e.get("year") or ""))
-        degree = escape_latex(str(e.get("degree") or ""))
-        school = escape_latex(str(e.get("school") or ""))
+        year = escape_latex(str(entry.get("year") or ""))
+        degree = escape_latex(str(entry.get("degree") or ""))
+        school = escape_latex(str(entry.get("school") or ""))
         lines.append(f"\\cventry{{{year}}}{{{degree}}}{{{school}}}{{}}{{}}{{}}")
     return "\n".join(lines)
 
@@ -280,7 +286,7 @@ def _sample_selection(pool: CVPool, template: str) -> CVSelection:
     The per-job engine builds this from one LLM call per posting; the
     bootstrap has no posting, so it stands in for the model with the widest
     honest selection -- every id in the pool, under the SAME one-page budget
-    (generate.py's MAX_BULLETS/MAX_OPEN_SOURCE) a real selection is held to,
+    (generate.py's MAXIMUM_BULLETS/MAXIMUM_OPEN_SOURCE) a real selection is held to,
     so the draft PDF looks like the documents this pool will actually
     produce rather than an everything-at-once version of it. Summary and
     expertise come from the template's own base declarations, which is
@@ -288,13 +294,15 @@ def _sample_selection(pool: CVPool, template: str) -> CVSelection:
     is English, per the spec's scope cut.
     """
     summary, expertise = base_fields(template)
-    bullets = tuple(b.id for e in pool.experiences for b in e.bullets)[:MAX_BULLETS]
+    bullets = tuple(bullet.id for experience in pool.experiences for bullet in experience.bullets)[
+        :MAXIMUM_BULLETS
+    ]
     return CVSelection(
         language="en",
         summary=summary,
         technical_expertise=expertise,
         bullets=bullets,
-        open_source=tuple(b.id for b in pool.open_source)[:MAX_OPEN_SOURCE],
+        open_source=tuple(bullet.id for bullet in pool.open_source)[:MAXIMUM_OPEN_SOURCE],
         translations={},
     )
 
@@ -333,14 +341,16 @@ async def bootstrap_cv_pool(
     tmp_path.write_text(DRAFT_HEADER + dump_pool(pool))
     try:
         load_pool(tmp_path)
-    except PoolError as e:
+    except PoolError as error:
         tmp_path.unlink(missing_ok=True)
-        raise BootstrapError(f"the drafted pool is not loadable, so it was discarded: {e}") from e
+        raise BootstrapError(
+            f"the drafted pool is not loadable, so it was discarded: {error}"
+        ) from error
     tmp_path.replace(pool_path)
 
-    template_dir = resolved_template_dir(config)
-    template_dir.mkdir(parents=True, exist_ok=True)
-    template_path = template_dir / "cv-template.en.tex"
+    template_directory = resolved_template_dir(config)
+    template_directory.mkdir(parents=True, exist_ok=True)
+    template_path = template_directory / "cv-template.en.tex"
     filled = fill_template(profile)
     template_path.write_text(filled)
 
@@ -351,12 +361,14 @@ async def bootstrap_cv_pool(
     # pdf_path then gets misread as "pdflatex is not installed." The sample
     # goes through render_cv, the same function the per-job path uses, so a
     # PDF here proves the pool AND the template are a working pair.
-    draft_tex = template_dir / DRAFT_TEX_NAME
+    draft_tex = template_directory / DRAFT_TEX_NAME
     draft_tex.write_text(
         strip_marker_lines(render_cv(filled, _sample_selection(pool, filled), pool))
     )
     pdf_path = compile_pdf(draft_tex)
-    bullet_count = sum(len(e.bullets) for e in pool.experiences) + len(pool.open_source)
+    bullet_count = sum(len(experience.bullets) for experience in pool.experiences) + len(
+        pool.open_source
+    )
     return BootstrapOutcome(
         pool_path=pool_path,
         template_path=template_path,

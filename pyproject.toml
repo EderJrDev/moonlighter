@@ -30,7 +30,7 @@ docs = [
 asyncio_mode = "auto"
 addopts = "--cov --cov-fail-under=100 -m 'not e2e'"
 markers = [
-    "e2e: end-to-end tests that require a real browser (run with -m e2e)",
+    "e2e: end-to-end tests that need a real browser, pdflatex, or the network (run with -m e2e)",
 ]
 
 [tool.ruff]

@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 # name the configured CV as the file to attach.
 _CV_LABEL = re.compile(r"\bcv\b|resume|curr[ií]c", re.I)
 
+# A choice with more options than this never reaches the LLM: a Lever select of
+# 3,301 options put ~26k tokens of option list into one prompt. The person picks
+# from the form instead.
+LLM_OPTION_LIMIT = 200
+
 PROMPT = """Answer one question on a job application, as the candidate.
 
 Candidate profile:
@@ -115,7 +120,7 @@ async def _generate(
 ) -> str | None:
     constraint = ""
     if question.is_choice:
-        options = "\n".join(f"- {o}" for o in question.options)
+        options = "\n".join(f"- {option}" for option in question.options)
         # "Strongest the profile supports": the model picked "minor limitations"
         # for a profile saying English (fluent/native) — live, 2026-08-13 — with
         # the fact right there in the prompt. Hedging downward misrepresents the
@@ -147,9 +152,9 @@ async def _generate(
     )
     try:
         raw = await llm_caller(prompt, "claude-sonnet-4-6")
-    except Exception as e:
+    except Exception as error:
         logger.warning("could not generate an answer for %r", question.label)
-        raise _GenerationError(str(e)) from e
+        raise _GenerationError(str(error)) from error
     answer = raw.strip()
     return None if not answer or answer == "UNKNOWN" else answer
 
@@ -169,7 +174,7 @@ async def compose_answers(
     if answer_bank is None:
         answer_bank = {}
     known = pre_populate_answers(
-        [q.label for q in questions],
+        [question.label for question in questions],
         profile,
         config,
         job.get("location"),
@@ -291,16 +296,25 @@ async def compose_answers(
             ):
                 answer = bank_answer
             else:
+                if question.is_choice and len(question.options) > LLM_OPTION_LIMIT:
+                    composed.append(
+                        ComposedAnswer(
+                            question,
+                            None,
+                            f"pick your answer from the {len(question.options)} options on the form",
+                        )
+                    )
+                    continue
                 if llm_exhausted:
                     composed.append(ComposedAnswer(question, None, _SPEND_LIMIT_REASON))
                     continue
                 try:
                     answer = await _generate(question, profile, job, llm_caller)
-                except _GenerationError as e:
+                except _GenerationError as error:
                     # After a spend-limit failure every further call is doomed the
                     # same way — one gap per remaining generated answer, no more
                     # calls. Deterministic pre-population above is unaffected.
-                    cause = e.__cause__
+                    cause = error.__cause__
                     if isinstance(cause, Exception) and is_spend_limit(cause):
                         llm_exhausted = True
                         composed.append(ComposedAnswer(question, None, _SPEND_LIMIT_REASON))

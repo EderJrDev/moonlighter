@@ -1,11 +1,12 @@
 import contextlib
 import sys
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 from mcp.server.mcpserver import Context, MCPServer
 from moonlighter._tool_logging import tool_logged
 from moonlighter.application.answers.answer_bank import (
@@ -22,15 +23,18 @@ from moonlighter.application.cvgen.bootstrap import bootstrap_cv_pool as bootstr
 from moonlighter.application.cvgen.compile import latex_available
 from moonlighter.core.config import (
     DEFAULTS,
+    ConfigError,
     harden_permissions,
     load_company_list,
     load_config,
     load_profile,
+    moonlighter_home,
     resolve_under_home,
     validate_config,
 )
 from moonlighter.core.db import Application, Job, init_db, sync_job_status
 from moonlighter.core.llm import LLMCaller, make_caller
+from moonlighter.core.log import get_logger
 from moonlighter.core.log import setup as _setup_logging
 from moonlighter.core.metrics import operation_metrics
 from moonlighter.core.parsing import wrap_untrusted
@@ -43,8 +47,34 @@ from moonlighter.tracking.email_monitor import sync_responses
 from moonlighter.tracking.gmail_client import GmailAuthError, run_gmail_oauth, setup_gmail_service
 from moonlighter.views import render_jobs_table
 
+logger = get_logger(__name__)
 
-@dataclass(frozen=True)
+
+def _modified_at(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+@dataclass
+class _WatchedFile:
+    path: Path
+    modified_at: int | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.modified_at = _modified_at(self.path)
+
+    def changed(self) -> bool:
+        """True once per edit: the new modification time is recorded as read."""
+        current = _modified_at(self.path)
+        if current == self.modified_at:
+            return False
+        self.modified_at = current
+        return True
+
+
+@dataclass
 class AppContext:
     config: dict[str, Any]
     profile: dict[str, Any]
@@ -52,6 +82,55 @@ class AppContext:
     llm_caller: LLMCaller
     startup_warnings: list[StartupWarning]
     permission_warnings: list[str]
+    # Set by the lifespan only. config.yaml and profile.yaml used to be read once,
+    # at connect time: on 2026-09-25 a config flag added mid-session was silently
+    # ignored, and sync_email_responses marked 11 messages processed without
+    # archiving them. A tool call now re-reads whichever file changed.
+    config_file: _WatchedFile | None = None
+    profile_file: _WatchedFile | None = None
+
+    def refresh(self) -> None:
+        if self.config_file is not None and self.config_file.changed():
+            try:
+                _read_mapping(self.config_file.path)
+                config = load_config(self.config_file.path)
+                validate_config(config)
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                _keep_last_good("config.yaml", error)
+            else:
+                self.config = config
+                self.llm_caller = make_caller(config)
+        if self.profile_file is not None and self.profile_file.changed():
+            if not self.profile_file.path.exists():
+                # The server boots with {} when profile.yaml is absent, so a
+                # deletion mid-session means the same thing.
+                self.profile = {}
+                return
+            try:
+                self.profile = _read_mapping(self.profile_file.path)
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                _keep_last_good("profile.yaml", error)
+
+
+def _read_mapping(path: Path) -> dict[str, Any]:
+    """The file's YAML mapping, or an error for anything else. An empty file is an
+    error too: an editor that truncates before writing leaves one for a moment, and
+    a tool call must not run on defaults in between (2026-09-29 review)."""
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict) or not data:
+        raise ConfigError(f"{path.name} is not a non-empty YAML mapping")
+    return data
+
+
+def _keep_last_good(name: str, error: Exception) -> None:
+    logger.warning("%s changed but does not load (%s) — keeping the last good one", name, error)
+
+
+def _app(context: Context[AppContext, Any]) -> AppContext:
+    """The server's state, with config.yaml/profile.yaml re-read if edited."""
+    app = context.request_context.lifespan_context
+    app.refresh()
+    return app
 
 
 @contextlib.asynccontextmanager
@@ -60,6 +139,9 @@ async def lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
     runs startup checks, and yields the AppContext. Raises ConfigError before
     yielding on an invalid config, refusing to boot."""
     _setup_logging()
+    home = moonlighter_home()
+    config_file = _WatchedFile(home / "config.yaml")
+    profile_file = _WatchedFile(home / "profile.yaml")
     config = load_config()
     validate_config(config)  # raises ConfigError -> server refuses to boot
     try:
@@ -70,11 +152,11 @@ async def lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
     init_db()
     permission_warnings = harden_permissions()
     startup_warnings = validate_startup(config, profile)
-    for msg in permission_warnings:
-        print(f"⚠️  {msg}", file=sys.stderr, flush=True)
-    for w in startup_warnings:
-        prefix = "🚫" if w.level == "error" else "⚠️ "
-        print(f"{prefix} {w.message}", file=sys.stderr, flush=True)
+    for message in permission_warnings:
+        print(f"⚠️  {message}", file=sys.stderr, flush=True)
+    for warning in startup_warnings:
+        prefix = "🚫" if warning.level == "error" else "⚠️ "
+        print(f"{prefix} {warning.message}", file=sys.stderr, flush=True)
     llm_caller = make_caller(config)
     yield AppContext(
         config=config,
@@ -83,6 +165,8 @@ async def lifespan(server: MCPServer) -> AsyncIterator[AppContext]:
         llm_caller=llm_caller,
         startup_warnings=startup_warnings,
         permission_warnings=permission_warnings,
+        config_file=config_file,
+        profile_file=profile_file,
     )
 
 
@@ -92,7 +176,7 @@ mcp = MCPServer("moonlighter", lifespan=lifespan)
 @mcp.tool()
 @tool_logged
 async def scan_and_evaluate(
-    keywords: str = "", phase: str = "phase1", *, ctx: Context[AppContext, Any]
+    keywords: str = "", phase: str = "phase1", *, context: Context[AppContext, Any]
 ) -> str:
     """Scan job boards, evaluate with LLM, return new jobs above threshold.
 
@@ -104,7 +188,7 @@ async def scan_and_evaluate(
         phase: "phase1" (default/BR), "phase2" (remote-first global),
                "phase3" (big techs), or "all" (everything)
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("scan_and_evaluate"):
         return render_scan_report(
             await scan_service.scan_and_evaluate(
@@ -115,7 +199,7 @@ async def scan_and_evaluate(
 
 @mcp.tool()
 @tool_logged
-async def scan_company(source: str, company: str, *, ctx: Context[AppContext, Any]) -> str:
+async def scan_company(source: str, company: str, *, context: Context[AppContext, Any]) -> str:
     """Scan every open posting at ONE company right now and evaluate the new ones.
 
     Does not touch company_list.yaml — use it for ad-hoc checks ("what is open
@@ -126,7 +210,7 @@ async def scan_company(source: str, company: str, *, ctx: Context[AppContext, An
         company: the company's slug on that ATS (e.g. "trm-labs"), or a full
                  custom career domain for Recruitee (e.g. "jobs.channable.com")
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("scan_company"):
         return render_scan_report(
             await scan_service.scan_company(
@@ -143,7 +227,7 @@ async def add_job(
     title: str = "",
     description: str = "",
     *,
-    ctx: Context[AppContext, Any],
+    context: Context[AppContext, Any],
 ) -> str:
     """Evaluates a manually provided job and saves it to the database.
 
@@ -162,7 +246,7 @@ async def add_job(
             required otherwise.
         description: job description text. If empty, tries to fetch it automatically.
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     return await scan_service.add_job(
         url, company, title, description, app.config, app.profile, app.llm_caller
     )
@@ -174,7 +258,7 @@ async def verify_job(
     job_id: int,
     page_text: str,
     *,
-    ctx: Context[AppContext, Any],
+    context: Context[AppContext, Any],
 ) -> str:
     """Re-evaluates a job that couldn't be scored automatically because its
     description was empty, using text you copy from its real page.
@@ -188,7 +272,7 @@ async def verify_job(
         job_id: the pending job's ID (from list_jobs(status="needs_review") or get_job)
         page_text: the copied page text — becomes the job's real description
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     return await scan_service.verify_job(job_id, page_text, app.config, app.profile, app.llm_caller)
 
 
@@ -198,31 +282,35 @@ async def archive_stale_jobs(
     job_id: int | None = None,
     company: str | None = None,
     *,
-    ctx: Context[AppContext, Any],
+    context: Context[AppContext, Any],
 ) -> str:
     """Detect and archive (status='archived', closed_at set) jobs that disappeared from their source.
 
     Checks jobs currently in new/reviewed/applying/needs_review against the source's
     current listing (Greenhouse/Lever/Ashby API, or a LinkedIn page revisit). A company
     whose check fails (network error, malformed response) is reported explicitly and left
-    untouched — never silently archived by mistake.
+    untouched — never silently archived by mistake. A job with no listing to compare
+    against (added by URL, source='manual') is listed with its link for the person to
+    confirm by hand, and is never archived.
 
     Args:
         job_id: check only this job (mutually exclusive with company).
         company: check only jobs from this company, case-insensitive (mutually exclusive
                  with job_id).
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     try:
         result = await scan_service.archive_stale_jobs(job_id, company, app.config)
-    except ArchiveStaleJobsError as e:
-        return str(e)
+    except ArchiveStaleJobsError as error:
+        return str(error)
     return format_archive_result(result)
 
 
 @mcp.tool()
 @tool_logged
-async def list_jobs(status: str = "new", limit: int = 20, *, ctx: Context[AppContext, Any]) -> str:
+async def list_jobs(
+    status: str = "new", limit: int = 20, *, context: Context[AppContext, Any]
+) -> str:
     """List jobs from DB filtered by status.
 
     Ordering is rejection-aware (see priority.py): a company that recently
@@ -233,31 +321,31 @@ async def list_jobs(status: str = "new", limit: int = 20, *, ctx: Context[AppCon
         return f"No jobs with status='{status}'."
     ages = company_rejection_ages()
     jobs.sort(
-        key=lambda j: (j.score or 0.0) - rejection_penalty(ages.get(j.company.lower(), [])),
+        key=lambda job: (job.score or 0.0) - rejection_penalty(ages.get(job.company.lower(), [])),
         reverse=True,
     )
     badges = {
-        j.id: badge
-        for j in jobs
-        if (badge := rejection_badge(ages.get(j.company.lower(), []))) is not None
+        job.id: badge
+        for job in jobs
+        if (badge := rejection_badge(ages.get(job.company.lower(), []))) is not None
     }
     return render_jobs_table(jobs, badges)
 
 
 @mcp.tool()
 @tool_logged
-async def get_job(id: int, *, ctx: Context[AppContext, Any]) -> str:
+async def get_job(id: int, *, context: Context[AppContext, Any]) -> str:
     """Get full details of a job posting."""
     try:
         job = Job.get_by_id(id)
     except Job.DoesNotExist:
         return f"Job #{id} not found."
     caveats = job.get_caveats()
-    score_str = f"{job.score:.1f}" if job.score is not None else "—"
+    score_text = f"{job.score:.1f}" if job.score is not None else "—"
     lines = [
         f"# {job.company} — {job.title}",
         f"**Source:** {job.source}  |  **Status:** {job.status}",
-        f"**Score:** {score_str}/10  |  **Remote:** {job.remote_type or 'n/a'}",
+        f"**Score:** {score_text}/10  |  **Remote:** {job.remote_type or 'n/a'}",
         f"**Posted:** {job.posted_at.strftime('%d/%m/%Y') if job.posted_at else 'n/a'}",
         f"**URL:** {job.url}",
     ]
@@ -281,14 +369,16 @@ async def get_job(id: int, *, ctx: Context[AppContext, Any]) -> str:
 
 @mcp.tool()
 @tool_logged
-async def prepare_application(job_id: int, *, ctx: Context[AppContext, Any]) -> str:
+async def prepare_application(job_id: int, *, context: Context[AppContext, Any]) -> str:
     """
     Produce the full set of answers for a job application, for you to paste into
-    the form yourself. Reads the questions from the ATS API when it publishes them
-    (Greenhouse, Recruitee); otherwise asks you to copy the page.
+    the form yourself. Reads the questions from the ATS when it publishes its form
+    (Greenhouse, Recruitee, Workable, Lever); otherwise asks you to copy the page.
+    InHire lists its required fields in that paste request, so you know up front
+    what its form will insist on.
     job_id: ID of the job
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("prepare_application"):
         return render_sheet_result(
             await assisted_service.prepare_application(job_id, app.config, app.profile)
@@ -298,15 +388,17 @@ async def prepare_application(job_id: int, *, ctx: Context[AppContext, Any]) -> 
 @mcp.tool()
 @tool_logged
 async def prepare_application_from_paste(
-    job_id: int, page_text: str, *, ctx: Context[AppContext, Any]
+    job_id: int, page_text: str, *, context: Context[AppContext, Any]
 ) -> str:
     """
     Same as prepare_application, for a page whose questions no API publishes:
-    select the whole application page, copy it, and pass the text here.
+    select the whole application page, copy it, and pass the text here. When the
+    job's ATS publishes its form, the paste is ignored and the published form is
+    used instead.
     job_id: ID of the job
     page_text: everything copied off the application page
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("prepare_application_from_paste"):
         return render_sheet_result(
             await assisted_service.prepare_application_from_paste(
@@ -317,9 +409,9 @@ async def prepare_application_from_paste(
 
 @mcp.tool()
 @tool_logged
-async def get_pipeline(*, ctx: Context[AppContext, Any]) -> str:
+async def get_pipeline(*, context: Context[AppContext, Any]) -> str:
     """Show full application funnel: counts and list by status."""
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     warnings = validate_startup(app.config, app.profile)
     statuses = [
         "draft",
@@ -333,9 +425,9 @@ async def get_pipeline(*, ctx: Context[AppContext, Any]) -> str:
     lines: list[str] = []
     if warnings:
         lines.append("# Setup Warnings\n")
-        for w in warnings:
-            marker = "ERROR" if w.level == "error" else "WARN"
-            lines.append(f"- [{marker}] {w.message}")
+        for warning in warnings:
+            marker = "ERROR" if warning.level == "error" else "WARN"
+            lines.append(f"- [{marker}] {warning.message}")
         lines.append("")
     lines.append("# Application Pipeline\n")
     for status in statuses:
@@ -364,13 +456,38 @@ async def get_pipeline(*, ctx: Context[AppContext, Any]) -> str:
 
 @mcp.tool()
 @tool_logged
+async def reopen_job(
+    job_id: int,
+    *,
+    context: Context[AppContext, Any],
+) -> str:
+    """Bring an archived job back to 'reviewed', to apply to it anyway.
+
+    Use when the person wants to try a job the scan or archive_stale_jobs archived
+    (a low score they disagree with, a posting still open). Only an archived job
+    can be reopened; its closed_at is cleared.
+    """
+    try:
+        job = Job.get_by_id(job_id)
+    except Job.DoesNotExist:
+        return f"Job #{job_id} not found."
+    if job.status != "archived":
+        return f"Job #{job_id} is not archived (status: {job.status!r}); nothing to reopen."
+    job.status = "reviewed"
+    job.closed_at = None
+    job.save()
+    return f"✓ Job #{job_id} ({job.company}/{job.title}): archived → reviewed"
+
+
+@mcp.tool()
+@tool_logged
 async def update_status(
     job_id: int,
     status: str,
     notes: str = "",
     next_action: str = "",
     *,
-    ctx: Context[AppContext, Any],
+    context: Context[AppContext, Any],
 ) -> str:
     """
     Update application status manually.
@@ -407,20 +524,20 @@ async def update_status(
 
 @mcp.tool()
 @tool_logged
-async def list_answer_bank(*, ctx: Context[AppContext, Any]) -> str:
+async def list_answer_bank(*, context: Context[AppContext, Any]) -> str:
     """
     Every banked screening answer, most recently used first. Entries older than
     answer_bank_max_age_days are marked expired: kept, but no longer replayed
     on a sheet until a new submission refreshes them.
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     max_age = app.config.get("answer_bank_max_age_days", DEFAULTS["answer_bank_max_age_days"])
     return render_answer_bank(list_entries(), max_age)
 
 
 @mcp.tool()
 @tool_logged
-async def forget_answer(question: str, *, ctx: Context[AppContext, Any]) -> str:
+async def forget_answer(question: str, *, context: Context[AppContext, Any]) -> str:
     """
     Delete one banked answer by its question text (matched the way the bank
     keys it: lowercase, collapsed whitespace, no trailing punctuation). Use it
@@ -435,7 +552,7 @@ async def forget_answer(question: str, *, ctx: Context[AppContext, Any]) -> str:
 
 @mcp.tool()
 @tool_logged
-async def setup_email(*, ctx: Context[AppContext, Any]) -> str:
+async def setup_email(*, context: Context[AppContext, Any]) -> str:
     """
     Configure Gmail authentication for the account that receives application replies.
     Run only once. Opens the browser to authorize access.
@@ -443,14 +560,14 @@ async def setup_email(*, ctx: Context[AppContext, Any]) -> str:
     (default MOONLIGHTER_HOME/gmail-client.json) and writes the token to
     email.token_path — overwriting whatever file that path names.
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     config = app.config
-    email_cfg = config.get("email", {})
+    email_config = config.get("email", {})
 
     # Checked before resolving: Path("").expanduser() is ".", a directory that
     # always exists, so resolving an unconfigured path first would trade this
     # clear message for a confusing "Is a directory" failure further down.
-    creds_path_raw = email_cfg.get("credentials_path", "")
+    creds_path_raw = email_config.get("credentials_path", "")
     if not creds_path_raw:
         return (
             "⚠️  email.credentials_path is not configured.\n"
@@ -460,7 +577,7 @@ async def setup_email(*, ctx: Context[AppContext, Any]) -> str:
         )
     creds_path = str(resolve_under_home(creds_path_raw))
     token_path = str(
-        resolve_under_home(email_cfg.get("token_path") or DEFAULTS["email"]["token_path"])
+        resolve_under_home(email_config.get("token_path") or DEFAULTS["email"]["token_path"])
     )
 
     if not Path(creds_path).exists():
@@ -473,27 +590,27 @@ async def setup_email(*, ctx: Context[AppContext, Any]) -> str:
         run_gmail_oauth(creds_path, token_path, config)
         setup_gmail_service(config)
         return "✓ Gmail authentication configured successfully."
-    except GmailAuthError as e:
-        return f"⚠️  Gmail authentication error: {e}"
-    except Exception as e:
-        return f"⚠️  Unexpected error configuring Gmail: {e}"
+    except GmailAuthError as error:
+        return f"⚠️  Gmail authentication error: {error}"
+    except Exception as error:
+        return f"⚠️  Unexpected error configuring Gmail: {error}"
 
 
 @mcp.tool()
 @tool_logged
-async def bootstrap_cv_pool(*, ctx: Context[AppContext, Any]) -> str:
+async def bootstrap_cv_pool(*, context: Context[AppContext, Any]) -> str:
     """
     Draft a CV bullet pool + adapted template from your profile.yaml — a
     first draft you review and edit, not a finished document. Offered by
     prepare_application whenever it finds no pool yet (see its
     cv_bootstrap_offer response), until you bootstrap one or skip it.
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     caller = make_caller(app.config)
     try:
         outcome = await bootstrap_cv_pool_service(app.profile, app.config, caller)
-    except BootstrapError as e:
-        return f"Could not draft a CV pool: {e}"
+    except BootstrapError as error:
+        return f"Could not draft a CV pool: {error}"
     # Two different reasons for a missing PDF, and naming the wrong one sends
     # the operator to install a pdflatex they already have. latex_available()
     # is the only thing that tells them apart.
@@ -518,7 +635,7 @@ async def bootstrap_cv_pool(*, ctx: Context[AppContext, Any]) -> str:
 
 @mcp.tool()
 @tool_logged
-async def skip_cv_bootstrap(*, ctx: Context[AppContext, Any]) -> str:
+async def skip_cv_bootstrap(*, context: Context[AppContext, Any]) -> str:
     """
     Decline the CV-pool bootstrap offer. You won't be asked again — you can
     still call bootstrap_cv_pool yourself at any time later.
@@ -549,13 +666,13 @@ def _promote_advanced_applications(updates: list[dict[str, Any]]) -> None:
 
 @mcp.tool()
 @tool_logged
-async def sync_email_responses(*, ctx: Context[AppContext, Any]) -> str:
+async def sync_email_responses(*, context: Context[AppContext, Any]) -> str:
     """
     Read recent emails in the configured Gmail account, whether read or unread,
     classify them with the LLM, and update the applications database.
     Returns a summary of the updates made.
     """
-    app = ctx.request_context.lifespan_context
+    app = _app(context)
     with operation_metrics("sync_email_responses"):
         updates = await sync_responses(app.config, app.llm_caller)
 
@@ -565,18 +682,18 @@ async def sync_email_responses(*, ctx: Context[AppContext, Any]) -> str:
         _promote_advanced_applications(updates)
 
         lines = [f"# Email sync — {len(updates)} update(s)\n"]
-        for u in updates:
-            company = u.get("company") or "?"
-            title = u.get("title") or "?"
-            msg_type = u.get("type", "?")
-            stage = u.get("stage") or ""
-            match_type = u.get("match_type", "")
-            stage_str = f" → {stage}" if stage else ""
-            line = f"- **{company}** / {title}: `{msg_type}`{stage_str} (match: {match_type})"
-            if u.get("needs_confirmation"):
+        for update_entry in updates:
+            company = update_entry.get("company") or "?"
+            title = update_entry.get("title") or "?"
+            message_type = update_entry.get("type", "?")
+            stage = update_entry.get("stage") or ""
+            match_type = update_entry.get("match_type", "")
+            stage_text = f" → {stage}" if stage else ""
+            line = f"- **{company}** / {title}: `{message_type}`{stage_text} (match: {match_type})"
+            if update_entry.get("needs_confirmation"):
                 line += (
                     f" — ⚠️ suggestion not applied; confirm with "
-                    f"update_status(job_id={u['suggested_job_id']}, status=...)"
+                    f"update_status(job_id={update_entry['suggested_job_id']}, status=...)"
                 )
             lines.append(line)
 

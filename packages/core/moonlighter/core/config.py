@@ -64,6 +64,9 @@ DEFAULTS: dict[str, Any] = {
     # config.example.yaml all lead with -- an installer coming through
     # `uvx moonlighter` has Claude Code far more often than an API key.
     "llm_backend": "cli",
+    # Seconds a `claude -p` call may run before it is killed and fails. One call
+    # hung for the whole 300 s of a test harness on 2026-09-25 with nothing to end it.
+    "llm_timeout_seconds": 180,
     "score_threshold": 6.5,
     # A banked answer older than this (days since it was last promoted, i.e.
     # last submitted somewhere) is not replayed. "When can you start?" is the
@@ -139,6 +142,7 @@ _CONFIG_SCHEMA: dict[str, tuple[type, ...]] = {
     "eval_model": (str,),
     "llm_backend": (str,),
     "cursor_model": (str,),
+    "llm_timeout_seconds": _NUM,
     "title_blocklist": (list,),
     "cv": (dict,),
     "work_authorization": (dict,),
@@ -188,11 +192,11 @@ def _check_type(key: str, value: Any, types: tuple[type, ...]) -> None:
     # bool is a subclass of int; reject it where int is required (and bool is not listed).
     if isinstance(value, bool) and bool not in types:
         raise ConfigError(
-            f"config key '{key}' must be {', '.join(t.__name__ for t in types)}, got bool"
+            f"config key '{key}' must be {', '.join(allowed.__name__ for allowed in types)}, got bool"
         )
     if not isinstance(value, types):
         raise ConfigError(
-            f"config key '{key}' must be {', '.join(t.__name__ for t in types)}, "
+            f"config key '{key}' must be {', '.join(allowed.__name__ for allowed in types)}, "
             f"got {type(value).__name__}"
         )
 
@@ -228,6 +232,10 @@ def validate_config(config: dict[str, Any]) -> None:
         _check_type(key, value, _CONFIG_SCHEMA[key])
         if key == "llm_backend":
             llm_backend(config)
+        if key == "llm_timeout_seconds" and value <= 0:
+            # Zero would kill every call before it answered — reading like a
+            # broken CLI instead of the config mistake it is.
+            raise ConfigError(f"config key 'llm_timeout_seconds' must be positive, got {value}")
         sub_schema = _NESTED_SCHEMAS.get(key)
         if sub_schema is not None:
             for sub_key, sub_value in value.items():
@@ -418,13 +426,13 @@ def harden_permissions() -> list[str]:
         if path.exists():
             try:
                 path.chmod(0o600)
-            except OSError as e:
-                warnings.append(f"could not restrict permissions on {path}: {e}")
+            except OSError as error:
+                warnings.append(f"could not restrict permissions on {path}: {error}")
     for name in _HARDEN_DIRS:
         path = home / name
         if path.exists():
             try:
                 path.chmod(0o700)
-            except OSError as e:
-                warnings.append(f"could not restrict permissions on {path}: {e}")
+            except OSError as error:
+                warnings.append(f"could not restrict permissions on {path}: {error}")
     return warnings

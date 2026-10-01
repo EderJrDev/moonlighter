@@ -40,9 +40,19 @@ def _fake_claude_on_path():
 # ── make_caller factory ───────────────────────────────────────────────────────
 
 
-def test_make_caller_cli_returns_call_cli():
-    caller = make_caller({"llm_backend": "cli"})
-    assert caller is _call_cli
+async def test_make_caller_cli_delegates_to_call_cli_with_the_configured_timeout():
+    delegate = AsyncMock(return_value="answer")
+    with patch("moonlighter.core.llm._call_cli", delegate):
+        caller = make_caller({"llm_backend": "cli", "llm_timeout_seconds": 42})
+        assert await caller("prompt", "model", cache_prefix="prefix") == "answer"
+    delegate.assert_awaited_once_with("prompt", "model", "prefix", timeout_seconds=42)
+
+
+async def test_make_caller_cli_defaults_to_a_180_second_timeout():
+    delegate = AsyncMock(return_value="answer")
+    with patch("moonlighter.core.llm._call_cli", delegate):
+        await make_caller({"llm_backend": "cli"})("prompt", "model")
+    assert delegate.await_args.kwargs["timeout_seconds"] == 180
 
 
 def test_make_caller_api_returns_callable():
@@ -66,7 +76,11 @@ def test_make_caller_defaults_to_cli_when_backend_omitted():
     config that omits the key used to demand an API key the user never expected
     to need.
     """
-    assert make_caller({}) is _call_cli
+    delegate = AsyncMock(return_value="answer")
+    with patch("moonlighter.core.llm._call_cli", delegate):
+        caller = make_caller({})
+    assert inspect.iscoroutinefunction(caller)
+    assert caller is not None
 
 
 def test_make_caller_rejects_an_unknown_backend():
@@ -88,29 +102,29 @@ async def test_call_cli_uses_sandbox_argv_and_stdin():
     no-MCP, no-session-persistence, no-CLAUDE.md posture."""
     from moonlighter.core.llm import _CLI_SANDBOX_ARGS
 
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b"hello from claude\n", b""))
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = AsyncMock(return_value=(b"hello from claude\n", b""))
 
     with (
         patch(
-            "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc
+            "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process
         ) as mock_exec,
         patch("moonlighter.core.llm.shutil.which", return_value="/usr/local/bin/claude"),
     ):
         result = await _call_cli("my prompt", "ignored-model")
 
     assert result == "hello from claude\n"
-    args, kwargs = mock_exec.call_args
-    assert args == ("/usr/local/bin/claude", *_CLI_SANDBOX_ARGS, "-p")
-    assert "my prompt" not in args  # the prompt NEVER goes into argv
-    assert kwargs["stdin"] == asyncio.subprocess.PIPE
-    assert kwargs["stdout"] == asyncio.subprocess.PIPE
-    assert kwargs["stderr"] == asyncio.subprocess.PIPE
-    assert "ANTHROPIC_API_KEY" not in kwargs["env"]
+    positional_arguments, keyword_arguments = mock_exec.call_args
+    assert positional_arguments == ("/usr/local/bin/claude", *_CLI_SANDBOX_ARGS, "-p")
+    assert "my prompt" not in positional_arguments  # the prompt NEVER goes into argv
+    assert keyword_arguments["stdin"] == asyncio.subprocess.PIPE
+    assert keyword_arguments["stdout"] == asyncio.subprocess.PIPE
+    assert keyword_arguments["stderr"] == asyncio.subprocess.PIPE
+    assert "ANTHROPIC_API_KEY" not in keyword_arguments["env"]
     # communicate() receives the prompt via stdin, not via argv
-    communicate_kwargs = mock_proc.communicate.call_args.kwargs
-    assert communicate_kwargs["input"] == b"my prompt"
+    communicate_keyword_arguments = mock_process.communicate.call_args.kwargs
+    assert communicate_keyword_arguments["input"] == b"my prompt"
 
 
 async def test_call_cli_sandbox_args_contents():
@@ -121,27 +135,27 @@ async def test_call_cli_sandbox_args_contents():
     assert "--safe-mode" in _CLI_SANDBOX_ARGS
     assert "--no-session-persistence" in _CLI_SANDBOX_ARGS
     assert "--strict-mcp-config" in _CLI_SANDBOX_ARGS
-    tools_idx = _CLI_SANDBOX_ARGS.index("--tools")
-    assert _CLI_SANDBOX_ARGS[tools_idx + 1] == ""
-    mcp_idx = _CLI_SANDBOX_ARGS.index("--mcp-config")
-    assert _CLI_SANDBOX_ARGS[mcp_idx + 1] == '{"mcpServers":{}}'
+    tools_index = _CLI_SANDBOX_ARGS.index("--tools")
+    assert _CLI_SANDBOX_ARGS[tools_index + 1] == ""
+    mcp_index = _CLI_SANDBOX_ARGS.index("--mcp-config")
+    assert _CLI_SANDBOX_ARGS[mcp_index + 1] == '{"mcpServers":{}}'
     assert "--bare" not in _CLI_SANDBOX_ARGS  # --bare kills OAuth/keychain — forbidden
 
 
 async def test_call_cli_cwd_is_neutral_workdir(tmp_path, monkeypatch):
     """cwd is never the repository — it's a dedicated directory inside MOONLIGHTER_HOME."""
     monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = AsyncMock(return_value=(b"ok", b""))
 
     with patch(
-        "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc
+        "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process
     ) as mock_exec:
         await _call_cli("prompt", "model")
 
-    kwargs = mock_exec.call_args.kwargs
-    assert kwargs["cwd"] == str(tmp_path / "cli-workdir")
+    keyword_arguments = mock_exec.call_args.kwargs
+    assert keyword_arguments["cwd"] == str(tmp_path / "cli-workdir")
 
 
 def test_cli_workdir_created_with_0700(tmp_path, monkeypatch):
@@ -166,95 +180,122 @@ def test_cli_workdir_is_idempotent(tmp_path, monkeypatch):
 
 async def test_call_cli_ignores_model_param():
     """_call_cli never passes model to subprocess — model is always ignored."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b"output", b""))
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = AsyncMock(return_value=(b"output", b""))
 
     with patch(
-        "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc
+        "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process
     ) as mock_exec:
         await _call_cli("prompt", "claude-opus-99")
 
-    call_args = mock_exec.call_args.args
-    assert "claude-opus-99" not in call_args
-    communicate_kwargs = mock_proc.communicate.call_args.kwargs
-    assert b"claude-opus-99" not in communicate_kwargs["input"]
+    call_arguments = mock_exec.call_args.args
+    assert "claude-opus-99" not in call_arguments
+    communicate_keyword_arguments = mock_process.communicate.call_args.kwargs
+    assert b"claude-opus-99" not in communicate_keyword_arguments["input"]
+
+
+@pytest.mark.parametrize("group_already_gone", [False, True])
+async def test_call_cli_kills_a_subprocess_that_does_not_answer_in_time(group_already_gone):
+    """One `claude -p` call hung for the whole 300 s on a 1,351-character page
+    (llm-tests-forge run, 2026-09-25): nothing ended it but the harness. The
+    whole process group is killed (see test_llm_process_group.py for the real
+    processes), and a group that exited in the meantime is not an error."""
+    import asyncio
+    import signal
+
+    async def never_answers(input=None):
+        await asyncio.sleep(3600)
+
+    mock_process = MagicMock()
+    mock_process.pid = 4242
+    mock_process.communicate = never_answers
+    mock_process.wait = AsyncMock(return_value=-9)
+    killpg = MagicMock(side_effect=ProcessLookupError if group_already_gone else None)
+    with (
+        patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process),
+        patch("moonlighter.core.llm.os.killpg", killpg),
+        pytest.raises(RuntimeError, match=r"did not answer within 0\.05 s"),
+    ):
+        await _call_cli("prompt", "model", timeout_seconds=0.05)
+    killpg.assert_called_once_with(4242, signal.SIGKILL)
+    mock_process.wait.assert_awaited_once()
 
 
 async def test_call_cli_raises_on_nonzero_exit():
-    mock_proc = MagicMock()
-    mock_proc.returncode = 1
-    mock_proc.communicate = AsyncMock(return_value=(b"", b"some error message"))
+    mock_process = MagicMock()
+    mock_process.returncode = 1
+    mock_process.communicate = AsyncMock(return_value=(b"", b"some error message"))
 
     with (
-        patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc),
-        pytest.raises(RuntimeError) as exc_info,
+        patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process),
+        pytest.raises(RuntimeError) as raised,
     ):
         await _call_cli("prompt", "model")
 
-    assert "code 1" in str(exc_info.value)
-    assert "some error message" in str(exc_info.value)
+    assert "code 1" in str(raised.value)
+    assert "some error message" in str(raised.value)
 
 
 async def test_call_cli_stderr_truncated_to_300_chars():
     """Long stderr is truncated at 300 chars in the error message."""
     long_stderr = b"E" * 500
-    mock_proc = MagicMock()
-    mock_proc.returncode = 2
-    mock_proc.communicate = AsyncMock(return_value=(b"", long_stderr))
+    mock_process = MagicMock()
+    mock_process.returncode = 2
+    mock_process.communicate = AsyncMock(return_value=(b"", long_stderr))
 
     with (
-        patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc),
-        pytest.raises(RuntimeError) as exc_info,
+        patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process),
+        pytest.raises(RuntimeError) as raised,
     ):
         await _call_cli("p", "m")
 
-    error_msg = str(exc_info.value)
-    assert "E" * 300 in error_msg
-    assert "E" * 301 not in error_msg
+    error_message = str(raised.value)
+    assert "E" * 300 in error_message
+    assert "E" * 301 not in error_message
 
 
 async def test_call_cli_empty_prompt_still_calls_subprocess():
     """Empty prompt is passed as-is, via stdin."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b"response", b""))
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = AsyncMock(return_value=(b"response", b""))
 
-    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc):
+    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process):
         result = await _call_cli("", "model")
 
     assert result == "response"
-    assert mock_proc.communicate.call_args.kwargs["input"] == b""
+    assert mock_process.communicate.call_args.kwargs["input"] == b""
 
 
 async def test_cli_launch_invariants():
     """Ruff's S (flake8-bandit) rules do not analyze asyncio.create_subprocess_exec, so the
     lint gate is blind to this call. This test is the gate instead: it locks the properties
     the S rules would have enforced if they understood the API."""
-    mock_proc = MagicMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"answer", b""))
-    mock_proc.returncode = 0
+    mock_process = MagicMock()
+    mock_process.communicate = AsyncMock(return_value=(b"answer", b""))
+    mock_process.returncode = 0
 
     with (
         patch(
-            "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc
+            "moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process
         ) as mock_exec,
         patch("moonlighter.core.llm.shutil.which", return_value="/usr/local/bin/claude"),
     ):
         await _call_cli("the prompt", "model")
 
-    args = mock_exec.call_args.args
-    kwargs = mock_exec.call_args.kwargs
+    positional_arguments = mock_exec.call_args.args
+    keyword_arguments = mock_exec.call_args.kwargs
     # 1. Absolute path, not a bare name resolved through PATH.
-    assert args[0] == "/usr/local/bin/claude"
-    assert Path(args[0]).is_absolute()
+    assert positional_arguments[0] == "/usr/local/bin/claude"
+    assert Path(positional_arguments[0]).is_absolute()
     # 2. List form: every argument passed positionally, never one joined string.
-    assert all(isinstance(a, str) for a in args)
+    assert all(isinstance(argument, str) for argument in positional_arguments)
     # 3. No shell, ever.
-    assert "shell" not in kwargs
+    assert "shell" not in keyword_arguments
     # 4. The prompt is not in argv — it goes over stdin (S-01).
-    assert "the prompt" not in args
-    assert kwargs["stdin"] is asyncio.subprocess.PIPE
+    assert "the prompt" not in positional_arguments
+    assert keyword_arguments["stdin"] is asyncio.subprocess.PIPE
 
 
 async def test_call_cli_errors_clearly_when_claude_is_not_on_path():
@@ -299,11 +340,11 @@ async def test_make_api_caller_custom_max_tokens():
     mock_anthropic.AsyncAnthropic.return_value = mock_client
 
     with patch("moonlighter.core.llm.anthropic", mock_anthropic):
-        caller = make_api_caller(max_tokens=512)
+        caller = make_api_caller(maximum_tokens=512)
         await caller("prompt", "model")
 
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    assert call_kwargs["max_tokens"] == 512
+    call_keyword_arguments = mock_client.messages.create.call_args.kwargs
+    assert call_keyword_arguments["max_tokens"] == 512
 
 
 async def test_make_api_caller_forwards_model():
@@ -319,8 +360,8 @@ async def test_make_api_caller_forwards_model():
         caller = make_api_caller()
         await caller("prompt", "claude-opus-4-7")
 
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    assert call_kwargs["model"] == "claude-opus-4-7"
+    call_keyword_arguments = mock_client.messages.create.call_args.kwargs
+    assert call_keyword_arguments["model"] == "claude-opus-4-7"
 
 
 async def test_make_api_caller_returns_first_content_text():
@@ -383,11 +424,11 @@ def test_llm_caller_type_is_exported():
 
 async def test_cli_caller_satisfies_llm_caller_contract():
     """_call_cli satisfies (prompt: str, model: str) -> str contract."""
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = AsyncMock(return_value=(b"result", b""))
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = AsyncMock(return_value=(b"result", b""))
 
-    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc):
+    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process):
         result = await _call_cli("hello", "any-model")
 
     assert isinstance(result, str)
@@ -431,15 +472,17 @@ async def test_cli_concatenates_cache_prefix():
     """cache_prefix is concatenated to the prompt in the cli backend."""
     captured: dict[str, bytes] = {}
 
-    async def fake_communicate(*args: object, **kwargs: object) -> tuple[bytes, bytes]:
-        captured["input"] = kwargs["input"]  # type: ignore[assignment]
+    async def fake_communicate(
+        *positional_arguments: object, **keyword_arguments: object
+    ) -> tuple[bytes, bytes]:
+        captured["input"] = keyword_arguments["input"]  # type: ignore[assignment]
         return (b"ok", b"")
 
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = fake_communicate
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = fake_communicate
 
-    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc):
+    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process):
         await _call_cli("DYN", "m", cache_prefix="STATIC")
     assert captured["input"] == b"STATIC\n\nDYN"
 
@@ -448,15 +491,17 @@ async def test_cli_no_cache_prefix_keeps_prompt_unchanged():
     """cache_prefix=None (default) keeps the original behavior in the cli."""
     captured: dict[str, bytes] = {}
 
-    async def fake_communicate(*args: object, **kwargs: object) -> tuple[bytes, bytes]:
-        captured["input"] = kwargs["input"]  # type: ignore[assignment]
+    async def fake_communicate(
+        *positional_arguments: object, **keyword_arguments: object
+    ) -> tuple[bytes, bytes]:
+        captured["input"] = keyword_arguments["input"]  # type: ignore[assignment]
         return (b"ok", b"")
 
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate = fake_communicate
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.communicate = fake_communicate
 
-    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_proc):
+    with patch("moonlighter.core.llm.asyncio.create_subprocess_exec", return_value=mock_process):
         await _call_cli("PROMPT_ONLY", "m")
     assert captured["input"] == b"PROMPT_ONLY"
 
@@ -475,8 +520,8 @@ async def test_api_uses_cache_control_block():
         caller = make_api_caller()
         await caller("DYN", "m", cache_prefix="STATIC")
 
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    content = call_kwargs["messages"][0]["content"]
+    call_keyword_arguments = mock_client.messages.create.call_args.kwargs
+    content = call_keyword_arguments["messages"][0]["content"]
     assert isinstance(content, list)
     assert content[0] == {"type": "text", "text": "STATIC", "cache_control": {"type": "ephemeral"}}
     assert content[1] == {"type": "text", "text": "DYN"}
@@ -496,8 +541,8 @@ async def test_api_no_cache_prefix_sends_plain_string():
         caller = make_api_caller()
         await caller("PROMPT_ONLY", "m")
 
-    call_kwargs = mock_client.messages.create.call_args.kwargs
-    content = call_kwargs["messages"][0]["content"]
+    call_keyword_arguments = mock_client.messages.create.call_args.kwargs
+    content = call_keyword_arguments["messages"][0]["content"]
     assert content == "PROMPT_ONLY"
 
 
@@ -953,9 +998,9 @@ IS_SPEND_LIMIT_CASES = [
 
 
 @pytest.mark.parametrize(
-    "exc,expected",
-    [(exc, expected) for exc, expected, _ in IS_SPEND_LIMIT_CASES],
+    "error,expected",
+    [(error, expected) for error, expected, _ in IS_SPEND_LIMIT_CASES],
     ids=[case_id for _, _, case_id in IS_SPEND_LIMIT_CASES],
 )
-def test_is_spend_limit_table(exc: Exception, expected: bool) -> None:
-    assert is_spend_limit(exc) is expected
+def test_is_spend_limit_table(error: Exception, expected: bool) -> None:
+    assert is_spend_limit(error) is expected

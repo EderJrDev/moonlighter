@@ -6,6 +6,7 @@ config/profile/caller logic, without depending on the global config loaded on im
 """
 
 import asyncio
+import datetime
 from typing import ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -62,7 +63,7 @@ def _saved_job(url, *, status="new", score=8.0, score_notes="match"):
 # ── _render_counts tests ─────────────────────────────────────────────────────
 
 
-async def test_render_counts_needs_review_separately_from_below(tmp_db):
+async def test_render_counts_needs_review_separately_from_below(temporary_database):
     init_db()
     above = _saved_job("https://x.com/fr/1", status="new", score=8.0)
     below = _saved_job("https://x.com/fr/2", status="archived", score=3.0)
@@ -83,7 +84,7 @@ async def test_render_counts_needs_review_separately_from_below(tmp_db):
     assert "verify_job(job_id, page_text)" in report
 
 
-async def test_render_counts_no_verify_line_when_nothing_pending(tmp_db):
+async def test_render_counts_no_verify_line_when_nothing_pending(temporary_database):
     init_db()
     above = _saved_job("https://x.com/fr/4", status="new", score=8.0)
     report = _render_counts(
@@ -92,7 +93,9 @@ async def test_render_counts_no_verify_line_when_nothing_pending(tmp_db):
     assert "need manual verification" not in report
 
 
-async def test_render_counts_verify_line_shown_even_with_nothing_above_threshold(tmp_db):
+async def test_render_counts_verify_line_shown_even_with_nothing_above_threshold(
+    temporary_database,
+):
     init_db()
     pending = _saved_job(
         "https://x.com/fr/5",
@@ -107,7 +110,7 @@ async def test_render_counts_verify_line_shown_even_with_nothing_above_threshold
     assert "1 job(s) need manual verification" in report
 
 
-async def test_render_counts_verify_note_is_pinned_exactly(tmp_db):
+async def test_render_counts_verify_note_is_pinned_exactly(temporary_database):
     init_db()
     pending = _saved_job(
         "https://x.com/fr/5",
@@ -129,7 +132,7 @@ async def test_render_counts_verify_note_is_pinned_exactly(tmp_db):
 # ── input validation ────────────────────────────────────────────────────────
 
 
-async def test_add_job_missing_company_title(tmp_db):
+async def test_add_job_missing_company_title(temporary_database):
     init_db()
     result = await scan_service.add_job(
         "https://x.com/1", "", "", "provided desc", CONFIG, PROFILE, MagicMock()
@@ -140,7 +143,7 @@ async def test_add_job_missing_company_title(tmp_db):
 # ── automatic description lookup via HTTP ───────────────────────────────────
 
 
-async def test_add_job_fetches_description_when_empty(tmp_db):
+async def test_add_job_fetches_description_when_empty(temporary_database):
     init_db()
     acm, _ = _http_client(text="<html><body>Real desc</body></html>")
     with (
@@ -158,7 +161,7 @@ async def test_add_job_fetches_description_when_empty(tmp_db):
     assert "Real desc" in (job.description or "")
 
 
-async def test_add_job_routes_through_ats_when_fields_missing(tmp_db):
+async def test_add_job_routes_through_ats_when_fields_missing(temporary_database):
     init_db()
     posting = FetchedPosting(
         company="GitLab", title="Account Executive", description="Build things."
@@ -182,7 +185,82 @@ async def test_add_job_routes_through_ats_when_fields_missing(tmp_db):
     assert job.description == "Build things."
 
 
-async def test_add_job_http_non_200_returns_error(tmp_db):
+async def test_add_job_hands_the_ats_location_to_the_evaluator(temporary_database):
+    """Without the structured location the LLM judges eligibility from the text alone —
+    the 2026-08-21 gitlab false-positive class, reintroduced by any caller that omits it."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab",
+        title="Account Executive",
+        description="Build things.",
+        location="Bangalore, India",
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792003"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(url, "", "", "", CONFIG, PROFILE, MagicMock())
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] is None
+    job = Job.get(Job.url == url)
+    assert job.location == "Bangalore, India"
+
+
+async def test_add_job_takes_the_ats_location_even_when_every_field_was_given(
+    temporary_database,
+):
+    """With company, title and description all pasted, the ATS lookup used to be
+    skipped, and the evaluator ran with no location — the gap this branch closes."""
+    init_db()
+    posting = FetchedPosting(
+        company="GitLab", title="Engineer", description="API text.", location="Bangalore, India"
+    )
+    url = "https://boards.greenhouse.io/gitlab/jobs/8503792004"
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            url, "GitLab", "Engineer", "Pasted text.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    # What the person pasted still wins over the API's copy.
+    assert eval_mock.call_args.kwargs["description"] == "Pasted text."
+
+
+async def test_add_job_marks_a_remote_ats_posting_remote(temporary_database):
+    init_db()
+    posting = FetchedPosting(
+        company="Channable",
+        title="Backend Engineer",
+        description="Elixir.",
+        location="Utrecht",
+        remote=True,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with (
+        patch(
+            "moonlighter.discovery.service.fetch_posting_via_ats",
+            new=AsyncMock(return_value=posting),
+        ),
+        patch("moonlighter.discovery.service.evaluate_job", new=eval_mock),
+    ):
+        await scan_service.add_job(
+            "https://jobs.channable.com/o/backend", "", "", "", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["remote_type"] == "remote"
+
+
+async def test_add_job_http_non_200_returns_error(temporary_database):
     init_db()
     acm, _ = _http_client(status_code=404)
     with patch("moonlighter.core.posting.httpx.AsyncClient", return_value=acm):
@@ -192,7 +270,7 @@ async def test_add_job_http_non_200_returns_error(tmp_db):
     assert "404" in result
 
 
-async def test_add_job_http_exception_returns_error(tmp_db):
+async def test_add_job_http_exception_returns_error(temporary_database):
     init_db()
     acm = MagicMock()
     acm.__aenter__ = AsyncMock(side_effect=Exception("connection refused"))
@@ -207,7 +285,7 @@ async def test_add_job_http_exception_returns_error(tmp_db):
 # ── deduplication ───────────────────────────────────────────────────────────
 
 
-async def test_add_job_dedup_existing_job(tmp_db):
+async def test_add_job_dedup_existing_job(temporary_database):
     init_db()
     Job.create(
         source="manual",
@@ -226,7 +304,7 @@ async def test_add_job_dedup_existing_job(tmp_db):
     assert "verify_job" not in result
 
 
-async def test_add_job_dedup_needs_review_job_does_not_crash_on_none_score(tmp_db):
+async def test_add_job_dedup_needs_review_job_does_not_crash_on_none_score(temporary_database):
     init_db()
     Job.create(
         source="manual",
@@ -245,7 +323,7 @@ async def test_add_job_dedup_needs_review_job_does_not_crash_on_none_score(tmp_d
     assert "verify_job" in result
 
 
-async def test_add_job_scanlog_without_job_proceeds_to_eval(tmp_db):
+async def test_add_job_scanlog_without_job_proceeds_to_eval(temporary_database):
     init_db()
     # ScanLog has the URL but there's no Job (rare inconsistent state) → dedup lets
     # it through (Job.get raises DoesNotExist), evaluates, but the final ScanLog.create
@@ -264,7 +342,7 @@ async def test_add_job_scanlog_without_job_proceeds_to_eval(tmp_db):
 # ── title filter ────────────────────────────────────────────────────────────
 
 
-async def test_add_job_title_blocklist_archives(tmp_db):
+async def test_add_job_title_blocklist_archives(temporary_database):
     init_db()
     result = await scan_service.add_job(
         "https://x.com/7", "Acme", "Staff Accountant", "desc", CONFIG, PROFILE, MagicMock()
@@ -275,7 +353,7 @@ async def test_add_job_title_blocklist_archives(tmp_db):
     assert job.score == 0.0
 
 
-async def test_add_job_title_blocklist_integrity_swallowed(tmp_db):
+async def test_add_job_title_blocklist_integrity_swallowed(temporary_database):
     init_db()
     # Pre-creates the URL to force IntegrityError in Job.create on the blocklist branch.
     Job.create(source="manual", company="Acme", title="x", url="https://x.com/8", status="new")
@@ -288,7 +366,7 @@ async def test_add_job_title_blocklist_integrity_swallowed(tmp_db):
 # ── evaluation and persistence ───────────────────────────────────────────────
 
 
-async def test_add_job_new_above_threshold_with_caveats(tmp_db):
+async def test_add_job_new_above_threshold_with_caveats(temporary_database):
     init_db()
     with patch(
         "moonlighter.discovery.service.evaluate_job",
@@ -303,7 +381,7 @@ async def test_add_job_new_above_threshold_with_caveats(tmp_db):
     assert ScanLog.get(ScanLog.job_url == "https://x.com/9").source == "manual"
 
 
-async def test_add_job_below_threshold_archived(tmp_db):
+async def test_add_job_below_threshold_archived(temporary_database):
     init_db()
     with patch(
         "moonlighter.discovery.service.evaluate_job",
@@ -317,7 +395,7 @@ async def test_add_job_below_threshold_archived(tmp_db):
     assert Job.get(Job.url == "https://x.com/10").status == "archived"
 
 
-async def test_add_job_integrity_conflict_on_create(tmp_db):
+async def test_add_job_integrity_conflict_on_create(temporary_database):
     init_db()
     Job.create(source="manual", company="Acme", title="x", url="https://x.com/11", status="new")
     with patch(
@@ -333,13 +411,13 @@ async def test_add_job_integrity_conflict_on_create(tmp_db):
 # ── verify_job ───────────────────────────────────────────────────────
 
 
-async def test_verify_job_not_found_returns_message(tmp_db):
+async def test_verify_job_not_found_returns_message(temporary_database):
     init_db()
     result = await scan_service.verify_job(999, "some page text here", CONFIG, PROFILE, MagicMock())
     assert "not found" in result.lower()
 
 
-async def test_verify_job_rejects_a_job_not_pending_verification(tmp_db):
+async def test_verify_job_rejects_a_job_not_pending_verification(temporary_database):
     init_db()
     job = Job.create(
         source="manual",
@@ -354,7 +432,7 @@ async def test_verify_job_rejects_a_job_not_pending_verification(tmp_db):
     assert "new" in result
 
 
-async def test_verify_job_rejects_a_too_short_paste_and_leaves_job_pending(tmp_db):
+async def test_verify_job_rejects_a_too_short_paste_and_leaves_job_pending(temporary_database):
     init_db()
     job = Job.create(
         source="inhire",
@@ -374,7 +452,28 @@ async def test_verify_job_rejects_a_too_short_paste_and_leaves_job_pending(tmp_d
     assert Job.get_by_id(job.id).status == "needs_review"
 
 
-async def test_verify_job_updates_the_same_row_and_scores_above_threshold(tmp_db):
+async def test_verify_job_hands_the_stored_location_to_the_evaluator(temporary_database):
+    init_db()
+    job = Job.create(
+        source="greenhouse",
+        company="GitLab",
+        title="Engineer",
+        url="https://x.com/vj/location",
+        location="Bangalore, India",
+        remote_type="onsite",
+        status="needs_review",
+        score=None,
+    )
+    eval_mock = AsyncMock(return_value=_eval(8.0))
+    with patch("moonlighter.discovery.service.evaluate_job", new=eval_mock):
+        await scan_service.verify_job(
+            job.id, "Full page text with the real job description.", CONFIG, PROFILE, MagicMock()
+        )
+    assert eval_mock.call_args.kwargs["location"] == "Bangalore, India"
+    assert eval_mock.call_args.kwargs["remote_type"] == "onsite"
+
+
+async def test_verify_job_updates_the_same_row_and_scores_above_threshold(temporary_database):
     init_db()
     job = Job.create(
         source="inhire",
@@ -401,7 +500,7 @@ async def test_verify_job_updates_the_same_row_and_scores_above_threshold(tmp_db
     assert "Alice" in result
 
 
-async def test_verify_job_scores_a_row_that_scan_actually_produced(tmp_db):
+async def test_verify_job_scores_a_row_that_scan_actually_produced(temporary_database):
     """Crosses the scan -> verify_job seam: builds the needs_review row through the
     real _run_scan pipeline (Task 1), then scores it through verify_job (Task 3) --
     proving the two sides agree on the row's shape (e.g. caveats='[]'), not just
@@ -432,7 +531,7 @@ async def test_verify_job_scores_a_row_that_scan_actually_produced(tmp_db):
     assert "NEW" in result
 
 
-async def test_verify_job_below_threshold_archives(tmp_db):
+async def test_verify_job_below_threshold_archives(temporary_database):
     init_db()
     job = Job.create(
         source="inhire",
@@ -459,12 +558,12 @@ async def test_verify_job_below_threshold_archives(tmp_db):
 from moonlighter.discovery.sources.base import RawJob  # noqa: E402
 
 
-def _raw(i, title="Engineer", source="greenhouse"):
+def _raw(index, title="Engineer", source="greenhouse"):
     return RawJob(
         source=source,
-        company=f"Co{i}",
+        company=f"Co{index}",
         title=title,
-        url=f"https://x.com/scan/{i}",
+        url=f"https://x.com/scan/{index}",
         description="A detailed job description that goes on.",
     )
 
@@ -481,18 +580,18 @@ class _FakeBrowserScanner:
     def __init__(self, page):
         pass
 
-    async def scan(self, **kwargs):
+    async def scan(self, **keyword_arguments):
         if self._exc is not None:
             raise self._exc
         return self._jobs
 
 
 async def _run_scan(
-    raws, *, eval_mock=None, linkedin_exc=None, linkedin_jobs=None, config=None, profile=None
+    raws, *, eval_mock=None, linkedin_error=None, linkedin_jobs=None, config=None, profile=None
 ):
     """Runs scan_and_evaluate with mocked HTTP scanners serving `raws`.
 
-    linkedin_exc: the exception the registered browser-scanner plugin's scan()
+    linkedin_error: the exception the registered browser-scanner plugin's scan()
     should raise. linkedin_jobs: the list of RawJob it should return instead.
     If both are None, no browser-scanner plugin is registered at all (the
     steady state for the public repo alone).
@@ -500,16 +599,16 @@ async def _run_scan(
     eval_mock: an AsyncMock applied per job within the batch. Can be
     AsyncMock(return_value=EvaluationResult) or AsyncMock(side_effect=exc).
     """
-    cfg = config or {**CONFIG, "title_blocklist": ["staff accountant"]}
+    resolved_config = config or {**CONFIG, "title_blocklist": ["staff accountant"]}
     _eval_per_job = eval_mock or AsyncMock(return_value=_eval(8.0))
 
     async def _batch(jobs, profile, model, caller):
         # Applies eval_mock to each job in the batch; errors propagate to evaluate_chunk.
-        return [await _eval_per_job(j.company, model) for j in jobs]
+        return [await _eval_per_job(job.company, model) for job in jobs]
 
     registered = []
-    if linkedin_exc is not None or linkedin_jobs is not None:
-        _FakeBrowserScanner._exc = linkedin_exc
+    if linkedin_error is not None or linkedin_jobs is not None:
+        _FakeBrowserScanner._exc = linkedin_error
         _FakeBrowserScanner._jobs = linkedin_jobs or []
         registered = [_FakeBrowserScanner]
 
@@ -529,7 +628,7 @@ async def _run_scan(
         MockAB.return_value.scan = AsyncMock(return_value=[])
         mock_browser.new_page = AsyncMock(return_value=AsyncMock())
         report = await scan_service.scan_and_evaluate(
-            "", "all", cfg, profile if profile is not None else PROFILE, MagicMock()
+            "", "all", resolved_config, profile if profile is not None else PROFILE, MagicMock()
         )
         return render_scan_report(report)
 
@@ -547,7 +646,7 @@ async def test_run_browser_scanner_browser_launch_failure_is_silent():
     assert warning is None
 
 
-async def test_scan_linkedin_jobs_are_evaluated(tmp_db):
+async def test_scan_linkedin_jobs_are_evaluated(temporary_database):
     init_db()
     li_raw = RawJob(
         source="linkedin",
@@ -561,7 +660,7 @@ async def test_scan_linkedin_jobs_are_evaluated(tmp_db):
     assert "LinkedInCo" in result
 
 
-async def test_scan_title_filtered_archives_with_score_zero(tmp_db):
+async def test_scan_title_filtered_archives_with_score_zero(temporary_database):
     init_db()
     result = await _run_scan([_raw(1, title="Staff Accountant")])
     job = Job.get(Job.url == "https://x.com/scan/1")
@@ -571,7 +670,7 @@ async def test_scan_title_filtered_archives_with_score_zero(tmp_db):
     assert "filtered by title" in result.lower()
 
 
-async def test_scan_ineligible_location_archives_without_llm(tmp_db):
+async def test_scan_ineligible_location_archives_without_llm(temporary_database):
     # Live 2026-08-20/21: "Bangalore, India" passed at 8.5 because the
     # eligibility rule lived in the prompt and the LLM never saw the location
     # field. Onsite/hybrid outside Belo Horizonte is impossible regardless of
@@ -595,7 +694,7 @@ async def test_scan_ineligible_location_archives_without_llm(tmp_db):
     assert "location ineligible" in result.lower()
 
 
-async def test_scan_without_a_home_city_never_archives_by_location(tmp_db):
+async def test_scan_without_a_home_city_never_archives_by_location(temporary_database):
     # A profile with no criteria.home_city (every public user by default):
     # onsite abroad is not impossible for them, so the LLM decides.
     init_db()
@@ -614,7 +713,7 @@ async def test_scan_without_a_home_city_never_archives_by_location(tmp_db):
     assert job.score == 8.0
 
 
-async def test_scan_ambiguous_location_still_reaches_the_llm(tmp_db):
+async def test_scan_ambiguous_location_still_reaches_the_llm(temporary_database):
     # The documented Colombia case: the field names a country, the JD may say
     # "remote from anywhere in LATAM" — only the evaluator can read the JD.
     init_db()
@@ -631,7 +730,7 @@ async def test_scan_ambiguous_location_still_reaches_the_llm(tmp_db):
     assert Job.get(Job.url == "https://x.com/scan/andes").status == "new"
 
 
-async def test_scan_empty_description_skips_llm_and_needs_review(tmp_db):
+async def test_scan_empty_description_skips_llm_and_needs_review(temporary_database):
     init_db()
     eval_mock = AsyncMock(return_value=_eval(8.0))
     raw = RawJob(
@@ -650,7 +749,7 @@ async def test_scan_empty_description_skips_llm_and_needs_review(tmp_db):
     assert "need manual verification" in result
 
 
-async def test_scan_short_description_also_needs_review(tmp_db):
+async def test_scan_short_description_also_needs_review(temporary_database):
     init_db()
     raw = RawJob(
         source="greenhouse",
@@ -665,7 +764,7 @@ async def test_scan_short_description_also_needs_review(tmp_db):
     assert "need manual verification" in result
 
 
-async def test_scan_real_description_still_evaluates_normally(tmp_db):
+async def test_scan_real_description_still_evaluates_normally(temporary_database):
     init_db()
     eval_mock = AsyncMock(return_value=_eval(8.0))
     result = await _run_scan([_raw(12)], eval_mock=eval_mock)
@@ -676,23 +775,25 @@ async def test_scan_real_description_still_evaluates_normally(tmp_db):
     assert "need manual verification" not in result
 
 
-async def test_scan_registered_scanner_session_expired_adds_warning(tmp_db):
+async def test_scan_registered_scanner_session_expired_adds_warning(temporary_database):
     init_db()
     from moonlighter.discovery.sources.base import ScannerSessionExpiredError
 
-    result = await _run_scan([_raw(2)], linkedin_exc=ScannerSessionExpiredError("session expired"))
+    result = await _run_scan(
+        [_raw(2)], linkedin_error=ScannerSessionExpiredError("session expired")
+    )
     assert "⚠️  _FakeBrowser: session expired" in result
 
 
-async def test_scan_registered_scanner_generic_error_is_swallowed(tmp_db):
+async def test_scan_registered_scanner_generic_error_is_swallowed(temporary_database):
     init_db()
-    result = await _run_scan([_raw(3)], linkedin_exc=RuntimeError("boom"))
+    result = await _run_scan([_raw(3)], linkedin_error=RuntimeError("boom"))
     # a generic scanner error doesn't become a warning nor block the HTTP results
     assert "_FakeBrowser" not in result
     assert Job.get(Job.url == "https://x.com/scan/3").status == "new"
 
 
-async def test_scan_unexpected_eval_error_stops_conservatively(tmp_db):
+async def test_scan_unexpected_eval_error_stops_conservatively(temporary_database):
     init_db()
     result = await _run_scan(
         [_raw(4)], eval_mock=AsyncMock(side_effect=ValueError("unexpected error"))
@@ -703,7 +804,7 @@ async def test_scan_unexpected_eval_error_stops_conservatively(tmp_db):
     assert "processed" in result and "No new jobs found" not in result
 
 
-async def test_scan_integrity_error_on_save_skips_silently(tmp_db):
+async def test_scan_integrity_error_on_save_skips_silently(temporary_database):
     init_db()
     # Pre-creates a Job with the same URL (no entry in ScanLog) → the claim succeeds,
     # evaluates, but Job.create collides → IntegrityError → job is skipped (return None).
@@ -712,7 +813,7 @@ async def test_scan_integrity_error_on_save_skips_silently(tmp_db):
     assert "processed" in result and "No new jobs found" not in result
 
 
-async def test_scan_title_filtered_integrity_error_skips_silently(tmp_db):
+async def test_scan_title_filtered_integrity_error_skips_silently(temporary_database):
     init_db()
     # Title in the blocklist + pre-existing Job (no ScanLog) → the filter branch
     # tenta Job.create archived, colide → IntegrityError → pulada (return None).
@@ -721,7 +822,7 @@ async def test_scan_title_filtered_integrity_error_skips_silently(tmp_db):
     assert "processed" in result and "No new jobs found" not in result
 
 
-async def test_scan_location_ineligible_integrity_error_skips_silently(tmp_db):
+async def test_scan_location_ineligible_integrity_error_skips_silently(temporary_database):
     init_db()
     # Ineligible location + pre-existing Job (no ScanLog) → the eligibility branch
     # attempts Job.create archived, collides → IntegrityError → skipped (return None).
@@ -739,7 +840,7 @@ async def test_scan_location_ineligible_integrity_error_skips_silently(tmp_db):
     assert "processed" in result and "No new jobs found" not in result
 
 
-async def test_scan_needs_review_integrity_error_skips_silently(tmp_db):
+async def test_scan_needs_review_integrity_error_skips_silently(temporary_database):
     init_db()
     # Insufficient description + pre-existing Job (no ScanLog) → the needs_review branch
     # attempts Job.create needs_review, collides → IntegrityError → skipped (return None).
@@ -773,7 +874,7 @@ class _Tracker:
         return '{"score": 8.0, "score_notes": "ok", "caveats": []}'
 
 
-async def test_scan_concurrency_is_capped(tmp_db):
+async def test_scan_concurrency_is_capped(temporary_database):
     init_db()
     caller = _Tracker()
     config = {
@@ -783,14 +884,14 @@ async def test_scan_concurrency_is_capped(tmp_db):
         "scan_batch_size": 1,
         "title_blocklist": [],
     }
-    jobs = [_raw(i) for i in range(6)]
+    jobs = [_raw(index) for index in range(6)]
     saved, spend_hit = await scan_service._evaluate_and_store(jobs, config, {}, caller)
     assert len(saved) == 6
     assert spend_hit is False
     assert caller.peak == 2
 
 
-async def test_scan_stops_before_llm_after_spend_limit(tmp_db):
+async def test_scan_stops_before_llm_after_spend_limit(temporary_database):
     init_db()
     calls = {"n": 0}
 
@@ -805,7 +906,7 @@ async def test_scan_stops_before_llm_after_spend_limit(tmp_db):
         "scan_batch_size": 1,
         "title_blocklist": [],
     }
-    jobs = [_raw(i) for i in range(5)]
+    jobs = [_raw(index) for index in range(5)]
     _saved, spend_hit = await scan_service._evaluate_and_store(jobs, config, {}, caller)
     assert spend_hit is True
     # concurrency=1: the 1st call detects the spend-limit and sets stop; the rest see
@@ -814,7 +915,7 @@ async def test_scan_stops_before_llm_after_spend_limit(tmp_db):
     assert ScanLog.select().count() == 0  # all claims released
 
 
-async def test_scan_chunk_skips_already_claimed_job(tmp_db):
+async def test_scan_chunk_skips_already_claimed_job(temporary_database):
     init_db()
     # Pre-inserts a claim for the URL → _claim returns False → job skipped without calling the LLM.
     ScanLog.create(job_url="https://x.com/scan/99", source="greenhouse")
@@ -835,7 +936,7 @@ async def test_scan_chunk_skips_already_claimed_job(tmp_db):
     assert ScanLog.select().count() == 1  # only the pre-existing claim
 
 
-async def test_scan_batches_jobs_into_one_call(tmp_db):
+async def test_scan_batches_jobs_into_one_call(temporary_database):
     init_db()
     calls = {"n": 0}
 
@@ -854,7 +955,7 @@ async def test_scan_batches_jobs_into_one_call(tmp_db):
         "scan_batch_size": 4,
         "title_blocklist": [],
     }
-    jobs = [_raw(i) for i in range(4)]
+    jobs = [_raw(index) for index in range(4)]
     saved, spend_hit = await scan_service._evaluate_and_store(jobs, config, {}, caller)
     assert len(saved) == 4
     assert spend_hit is False
@@ -867,7 +968,7 @@ from moonlighter.discovery.archive import ArchiveStaleJobsError, archive_stale_j
 from moonlighter.discovery.staleness import StalenessResult  # noqa: E402
 
 
-def _stale_job(tmp_db, **kwargs):
+def _stale_job(temporary_database, **overrides):
     defaults = {
         "source": "greenhouse",
         "company": "acme",
@@ -875,26 +976,26 @@ def _stale_job(tmp_db, **kwargs):
         "url": "https://boards.greenhouse.io/acme/jobs/1",
         "status": "new",
     }
-    defaults.update(kwargs)
+    defaults.update(overrides)
     return Job.create(**defaults)
 
 
-async def test_archive_stale_jobs_raises_when_job_id_and_company_both_given(tmp_db):
+async def test_archive_stale_jobs_raises_when_job_id_and_company_both_given(temporary_database):
     init_db()
     with pytest.raises(ArchiveStaleJobsError):
         await archive_stale_jobs(1, "acme", CONFIG)
 
 
-async def test_archive_stale_jobs_no_eligible_jobs_returns_empty(tmp_db):
+async def test_archive_stale_jobs_no_eligible_jobs_returns_empty(temporary_database):
     init_db()
     result = await archive_stale_jobs(None, None, CONFIG)
     assert result.archived == []
     assert result.failed_companies == []
 
 
-async def test_archive_stale_jobs_marks_stale_job_closed(tmp_db, monkeypatch):
+async def test_archive_stale_jobs_marks_stale_job_closed(temporary_database, monkeypatch):
     init_db()
-    job = _stale_job(tmp_db)
+    job = _stale_job(temporary_database)
 
     async def fake_find(jobs_by_company, scanners, config):
         return StalenessResult(stale=[job], failed_companies=[])
@@ -910,9 +1011,45 @@ async def test_archive_stale_jobs_marks_stale_job_closed(tmp_db, monkeypatch):
     ]
 
 
-async def test_archive_stale_jobs_reports_failed_companies(tmp_db, monkeypatch):
+async def test_archive_stale_jobs_lists_unverifiable_jobs_for_confirmation(
+    temporary_database, monkeypatch
+):
     init_db()
-    _stale_job(tmp_db)
+    job = _stale_job(
+        temporary_database,
+        source="manual",
+        company="Flywheel",
+        title="Backend Engineer",
+        url="https://hiring.example/jobs/7",
+        score=7.5,
+        status="reviewed",
+        found_at=datetime.datetime.now() - datetime.timedelta(days=12, hours=1),
+    )
+
+    async def fake_find(jobs_by_company, scanners, config):
+        return StalenessResult(unverifiable=[job])
+
+    monkeypatch.setattr("moonlighter.discovery.archive.find_stale_jobs", fake_find)
+    result = await archive_stale_jobs(None, None, CONFIG)
+
+    assert result.to_confirm == [
+        {
+            "id": job.id,
+            "score": 7.5,
+            "status": "reviewed",
+            "age_days": 12,
+            "company": "Flywheel",
+            "title": "Backend Engineer",
+            "url": "https://hiring.example/jobs/7",
+        }
+    ]
+    # Never archived by the machine: only the person can say it closed.
+    assert Job.get_by_id(job.id).status == "reviewed"
+
+
+async def test_archive_stale_jobs_reports_failed_companies(temporary_database, monkeypatch):
+    init_db()
+    _stale_job(temporary_database)
 
     async def fake_find(jobs_by_company, scanners, config):
         return StalenessResult(stale=[], failed_companies=["acme"])
@@ -928,10 +1065,10 @@ async def test_archive_stale_jobs_reports_failed_companies(tmp_db, monkeypatch):
     assert job.closed_at is None
 
 
-async def test_archive_stale_jobs_filters_by_job_id(tmp_db, monkeypatch):
+async def test_archive_stale_jobs_filters_by_job_id(temporary_database, monkeypatch):
     init_db()
-    target = _stale_job(tmp_db, url="https://boards.greenhouse.io/acme/jobs/1")
-    other = _stale_job(tmp_db, url="https://boards.greenhouse.io/acme/jobs/2")
+    target = _stale_job(temporary_database, url="https://boards.greenhouse.io/acme/jobs/1")
+    other = _stale_job(temporary_database, url="https://boards.greenhouse.io/acme/jobs/2")
 
     seen_groups = []
 
@@ -943,14 +1080,16 @@ async def test_archive_stale_jobs_filters_by_job_id(tmp_db, monkeypatch):
     await archive_stale_jobs(target.id, None, CONFIG)
 
     jobs_checked = seen_groups[0][("greenhouse", "acme")]
-    assert [j.id for j in jobs_checked] == [target.id]
-    assert other.id not in [j.id for j in jobs_checked]
+    assert [job.id for job in jobs_checked] == [target.id]
+    assert other.id not in [job.id for job in jobs_checked]
 
 
-async def test_archive_stale_jobs_filters_by_company_case_insensitive(tmp_db, monkeypatch):
+async def test_archive_stale_jobs_filters_by_company_case_insensitive(
+    temporary_database, monkeypatch
+):
     init_db()
-    acme_job = _stale_job(tmp_db, company="acme", url="https://x.com/1")
-    _stale_job(tmp_db, company="beta", url="https://x.com/2")
+    acme_job = _stale_job(temporary_database, company="acme", url="https://x.com/1")
+    _stale_job(temporary_database, company="beta", url="https://x.com/2")
 
     seen_groups = []
 
@@ -962,14 +1101,14 @@ async def test_archive_stale_jobs_filters_by_company_case_insensitive(tmp_db, mo
     await archive_stale_jobs(None, "ACME", CONFIG)
 
     jobs_checked = seen_groups[0][("greenhouse", "acme")]
-    assert [j.id for j in jobs_checked] == [acme_job.id]
+    assert [job.id for job in jobs_checked] == [acme_job.id]
 
 
-async def test_archive_stale_jobs_excludes_resolved_statuses(tmp_db, monkeypatch):
+async def test_archive_stale_jobs_excludes_resolved_statuses(temporary_database, monkeypatch):
     init_db()
-    _stale_job(tmp_db, status="applied", url="https://x.com/1")
-    _stale_job(tmp_db, status="rejected", url="https://x.com/2")
-    _stale_job(tmp_db, status="archived", url="https://x.com/3")
+    _stale_job(temporary_database, status="applied", url="https://x.com/1")
+    _stale_job(temporary_database, status="rejected", url="https://x.com/2")
+    _stale_job(temporary_database, status="archived", url="https://x.com/3")
 
     seen_groups = []
 
@@ -1022,6 +1161,39 @@ def testformat_archive_result_archived_and_failed():
     formatted = format_archive_result(result)
     assert "1 job(s) archived" in formatted
     assert "Could not check: beta" in formatted
+
+
+def test_format_archive_result_lists_jobs_to_confirm_by_hand():
+    from moonlighter.discovery.archive import ArchiveResult, format_archive_result
+
+    result = ArchiveResult(
+        to_confirm=[
+            {
+                "id": 42,
+                "score": 7.5,
+                "status": "reviewed",
+                "age_days": 12,
+                "company": "Flywheel",
+                "title": "Backend Engineer",
+                "url": "https://hiring.example/jobs/7",
+            },
+            {
+                "id": 43,
+                "score": None,
+                "status": "needs_review",
+                "age_days": None,
+                "company": "Acme",
+                "title": "Engineer",
+                "url": "https://acme.example/1",
+            },
+        ]
+    )
+    formatted = format_archive_result(result)
+    assert "No closed jobs found." in formatted
+    assert "2 job(s) have no listing to check against" in formatted
+    assert "#42 | 7.5 | reviewed | 12d | Flywheel — Backend Engineer" in formatted
+    assert "https://hiring.example/jobs/7" in formatted
+    assert "#43 | — | needs_review | ?d | Acme — Engineer" in formatted
 
 
 # ── Gupy dispatch (portal-wide keyword feed, LinkedIn-model, config-gated) ──
@@ -1155,7 +1327,7 @@ async def test_portal_feed_is_filtered_by_keywords():
         new=AsyncMock(return_value=jobs),
     ):
         got = await _scan_remoteok({"scan_remoteok": True}, {}, "backend")
-    assert [j.title for j in got] == ["Backend Engineer"]
+    assert [job.title for job in got] == ["Backend Engineer"]
 
 
 # ── Per-source warnings + dead-API canary ────────────────────────────────────
@@ -1171,10 +1343,10 @@ from moonlighter.discovery.sources.base import ScanStats, SourceStats  # noqa: E
 
 
 def _mock_client_cls(mock_client):
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    return cls
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    return client_class
 
 
 def test_stats_warnings_flags_errors_and_empty_sources():
@@ -1227,7 +1399,7 @@ async def test_unknown_company_list_source_warns():
     assert "unknown source 'workday'" in warning
 
 
-def test_drop_already_seen_matches_across_apply_suffix(tmp_db):
+def test_drop_already_seen_matches_across_apply_suffix(temporary_database):
     init_db()
     ScanLog.create(job_url="https://x.recruitee.com/o/dev/c/new", source="recruitee")
     raw = RawJob(source="recruitee", company="x", title="Dev", url="https://x.recruitee.com/o/dev")
@@ -1249,40 +1421,42 @@ async def test_scan_company_rejects_unknown_source():
     assert "greenhouse" in report  # names the valid ones
 
 
-async def test_scan_company_scans_evaluates_and_reports(tmp_db):
+async def test_scan_company_scans_evaluates_and_reports(temporary_database):
     init_db()
     with (
         patch("moonlighter.discovery.sources.http.GreenhouseScanner") as MockGH,
         patch(
             "moonlighter.discovery.service._evaluate_and_store",
             new=AsyncMock(return_value=([], False)),
-        ) as ev,
+        ) as evaluate_mock,
     ):
         MockGH.return_value.scan = AsyncMock(return_value=[_raw(1, source="greenhouse")])
         report = render_scan_report(
             await scan_company("greenhouse", "stripe", {"score_threshold": 6.5}, {}, _fake_caller)
         )
-    assert ev.await_count == 1
+    assert evaluate_mock.await_count == 1
     assert "company_list.yaml" in report  # the recurring-scan tip
 
 
-async def test_scan_company_no_new_jobs_skips_evaluation(tmp_db):
+async def test_scan_company_no_new_jobs_skips_evaluation(temporary_database):
     init_db()
     ScanLog.create(job_url="https://x.com/scan/1", source="greenhouse")
     with (
         patch("moonlighter.discovery.sources.http.GreenhouseScanner") as MockGH,
-        patch("moonlighter.discovery.service._evaluate_and_store", new=AsyncMock()) as ev,
+        patch(
+            "moonlighter.discovery.service._evaluate_and_store", new=AsyncMock()
+        ) as evaluate_mock,
     ):
         MockGH.return_value.scan = AsyncMock(return_value=[_raw(1, source="greenhouse")])
         report = render_scan_report(
             await scan_company("greenhouse", "stripe", {"score_threshold": 6.5}, {}, _fake_caller)
         )
-    ev.assert_not_called()
+    evaluate_mock.assert_not_called()
     assert "No new jobs at 'stripe'" in report
     assert "company_list.yaml" in report
 
 
-async def test_scan_company_zero_raw_jobs_does_not_claim_all_already_known(tmp_db):
+async def test_scan_company_zero_raw_jobs_does_not_claim_all_already_known(temporary_database):
     """MINOR regression: an empty raw_jobs list can mean either 'company has no
     open postings' or 'the fetch failed' -- the old '(0 found, all already
     known)' message asserted the fetch succeeded and simply found nothing,
@@ -1290,19 +1464,21 @@ async def test_scan_company_zero_raw_jobs_does_not_claim_all_already_known(tmp_d
     init_db()
     with (
         patch("moonlighter.discovery.sources.http.GreenhouseScanner") as MockGH,
-        patch("moonlighter.discovery.service._evaluate_and_store", new=AsyncMock()) as ev,
+        patch(
+            "moonlighter.discovery.service._evaluate_and_store", new=AsyncMock()
+        ) as evaluate_mock,
     ):
         MockGH.return_value.scan = AsyncMock(return_value=[])
         report = render_scan_report(
             await scan_company("greenhouse", "stripe", {"score_threshold": 6.5}, {}, _fake_caller)
         )
-    ev.assert_not_called()
+    evaluate_mock.assert_not_called()
     assert "No open jobs found at 'stripe'" in report
     assert "all already known" not in report
     assert "company_list.yaml" in report
 
 
-async def test_aged_portal_jobs_archive_as_aged_not_closed(tmp_db):
+async def test_aged_portal_jobs_archive_as_aged_not_closed(temporary_database):
     import datetime
 
     from moonlighter.discovery.archive import format_archive_result
@@ -1329,7 +1505,7 @@ async def test_aged_portal_jobs_archive_as_aged_not_closed(tmp_db):
 # ── --no-eval: caller=NO_EVAL, zero-LLM mode ─────────────────────────────────
 
 
-async def test_no_eval_persists_evaluable_jobs_as_needs_review_without_an_llm(tmp_db):
+async def test_no_eval_persists_evaluable_jobs_as_needs_review_without_an_llm(temporary_database):
     # caller=NO_EVAL is the zero-LLM mode. A job that WOULD have gone to the
     # model is stored unscored for verify_job later; nothing else changes.
     init_db()
@@ -1346,12 +1522,12 @@ async def test_no_eval_persists_evaluable_jobs_as_needs_review_without_an_llm(tm
         scan_service.NO_EVAL,
     )
     assert spend_hit is False
-    assert [j.status for j in saved] == ["needs_review"]
+    assert [job.status for job in saved] == ["needs_review"]
     assert saved[0].score is None
     assert saved[0].score_notes == "not evaluated (--no-eval)"
 
 
-async def test_no_eval_still_archives_title_filtered_jobs_deterministically(tmp_db):
+async def test_no_eval_still_archives_title_filtered_jobs_deterministically(temporary_database):
     init_db()
     raw = _raw(2, title="Recruiter")
     saved, _ = await scan_service._evaluate_and_store(
@@ -1365,11 +1541,11 @@ async def test_no_eval_still_archives_title_filtered_jobs_deterministically(tmp_
         {},
         scan_service.NO_EVAL,
     )
-    assert [j.status for j in saved] == ["archived"]
+    assert [job.status for job in saved] == ["archived"]
     assert saved[0].score_notes.startswith("title filtered:")
 
 
-async def test_no_eval_needs_review_integrity_error_skips_silently(tmp_db):
+async def test_no_eval_needs_review_integrity_error_skips_silently(temporary_database):
     init_db()
     # Pre-existing Job at the same URL (no ScanLog claim) -> the --no-eval
     # branch's Job.create collides -> IntegrityError -> _persist returns None
@@ -1391,7 +1567,7 @@ async def test_no_eval_needs_review_integrity_error_skips_silently(tmp_db):
     assert spend_hit is False
 
 
-async def test_a_stray_none_caller_does_not_take_the_no_eval_shortcut(tmp_db):
+async def test_a_stray_none_caller_does_not_take_the_no_eval_shortcut(temporary_database):
     # The hardening this guards: NO_EVAL is a dedicated sentinel, not None, so
     # an accidental caller=None elsewhere can never silently match it and skip
     # the LLM. Proven by mocking evaluate_jobs_batch and asserting it's called.

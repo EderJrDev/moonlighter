@@ -72,14 +72,14 @@ async def _reevaluate(
         errors = 0
         quota_hit = False
 
-        sem = asyncio.Semaphore(concurrency)
+        semaphore = asyncio.Semaphore(concurrency)
         stop = asyncio.Event()
         print_lock = asyncio.Lock()
 
-        async def _process(idx: int, job: Job) -> None:
+        async def _process(position: int, job: Job) -> None:
             nonlocal promoted, stayed_archived, title_skipped, errors, quota_hit
 
-            label = f"[{idx:4d}/{total}] [{job.company}] {job.title[:55]:55s}"
+            label = f"[{position:4d}/{total}] [{job.company}] {job.title[:55]:55s}"
 
             matched_pattern = should_skip_by_title(job.title, blocklist)
             if matched_pattern:
@@ -98,7 +98,7 @@ async def _reevaluate(
             if stop.is_set():
                 return
 
-            async with sem:
+            async with semaphore:
                 if stop.is_set():
                     return
 
@@ -115,19 +115,21 @@ async def _reevaluate(
                         profile=profile,
                         model=model,
                         _caller=caller,
+                        location=job.location,
+                        remote_type=job.remote_type,
                     )
-                except Exception as e:
-                    if is_spend_limit(e):
+                except Exception as error:
+                    if is_spend_limit(error):
                         stop.set()
                         quota_hit = True
                         async with print_lock:
-                            print(f"{label} 🚫 SPEND LIMIT reached — stopping. Error: {e}")
+                            print(f"{label} 🚫 SPEND LIMIT reached — stopping. Error: {error}")
                         return
                     async with print_lock:
-                        print(f"{label} ✗ ERROR: {e}")
+                        print(f"{label} ✗ ERROR: {error}")
                         errors += 1
                     if not dry_run:
-                        Job.update(score_notes=f"reevaluate_error: {str(e)[:200]}").where(
+                        Job.update(score_notes=f"reevaluate_error: {str(error)[:200]}").where(
                             Job.id == job.id
                         ).execute()
                     return
@@ -154,7 +156,7 @@ async def _reevaluate(
                 else:
                     stayed_archived += 1
 
-        await asyncio.gather(*[_process(idx, job) for idx, job in enumerate(jobs, 1)])
+        await asyncio.gather(*[_process(position, job) for position, job in enumerate(jobs, 1)])
 
         if quota_hit:
             print("\n🚫 Re-evaluation interrupted by spend limit.")
@@ -186,30 +188,30 @@ def main() -> None:
     parser.add_argument(
         "--concurrency", type=int, default=5, help="Evaluations in parallel (default: 5)"
     )
-    args = parser.parse_args()
+    arguments = parser.parse_args()
 
     setup_logging()
     config = load_config()
     profile = load_profile()
     init_db()  # resolve o path via moonlighter_home() / MOONLIGHTER_DB_PATH (fonte única em db.py)
 
-    model = args.model or config.get(
+    model = arguments.model or config.get(
         "eval_model", config.get("llm_model", "claude-haiku-4-5-20251001")
     )
 
-    victims = _fetch_victims(args.company, args.limit)
+    victims = _fetch_victims(arguments.company, arguments.limit)
     if not victims:
         print("No jobs with bug signature found.")
         return
 
     print(f"Jobs found: {len(victims)}  |  model: {model}")
     by_company: dict[str, int] = {}
-    for j in victims:
-        by_company[j.company] = by_company.get(j.company, 0) + 1
-    for company, count in sorted(by_company.items(), key=lambda x: -x[1]):
+    for victim in victims:
+        by_company[victim.company] = by_company.get(victim.company, 0) + 1
+    for company, count in sorted(by_company.items(), key=lambda item: -item[1]):
         print(f"  {company:20s}: {count}")
 
-    if args.dry_run:
+    if arguments.dry_run:
         print("\n⚠️  DRY RUN — no changes will be saved.\n")
 
     asyncio.run(
@@ -217,10 +219,10 @@ def main() -> None:
             victims,
             config,
             profile,
-            dry_run=args.dry_run,
+            dry_run=arguments.dry_run,
             model=model,
-            title_only=args.title_only,
-            concurrency=args.concurrency,
+            title_only=arguments.title_only,
+            concurrency=arguments.concurrency,
         )
     )
 

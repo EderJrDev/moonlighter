@@ -29,6 +29,17 @@ class FetchedPosting:
     company: str | None
     title: str | None
     description: str | None
+    # The evaluator's regional filter needs the structured location: from the
+    # description alone the LLM misjudges eligibility (2026-08-21 gitlab incident).
+    location: str | None = None
+    remote: bool = False
+
+
+def _is_true(value: object) -> bool:
+    """A JSON flag that may arrive as a string: bool("false") is True."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return value is True or value == 1
 
 
 def strip_tags(raw: str) -> str | None:
@@ -61,6 +72,7 @@ async def _fetch_greenhouse(board: str, job_id: str) -> FetchedPosting | None:
         company=data.get("company_name") or board,
         title=data.get("title"),
         description=strip_tags(raw),
+        location=(data.get("location") or {}).get("name"),
     )
 
 
@@ -94,6 +106,8 @@ async def _fetch_recruitee_offer(host: str, offer: str) -> FetchedPosting | None
                 company=item.get("company_name"),
                 title=item.get("title"),
                 description=strip_tags(item.get("description") or ""),
+                location=item.get("location"),
+                remote=_is_true(item.get("remote")),
             )
     return None
 
@@ -103,15 +117,16 @@ async def fetch_description(url: str) -> tuple[str | None, str | None]:
     error) — only one of the two is non-null. Doesn't work on pages that require login."""
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            r = await client.get(url, headers=HEADERS)
-        if r.status_code != 200:
+            response = await client.get(url, headers=HEADERS)
+        if response.status_code != 200:
             return None, (
-                f"Could not fetch the URL (HTTP {r.status_code}). Provide 'description' manually."
+                f"Could not fetch the URL (HTTP {response.status_code}). "
+                "Provide 'description' manually."
             )
         # Remove script/style/noscript WITH their contents first: a bare
         # tag-strip leaves e.g. a styled-components CSS bundle as the
         # "description" of any SPA page (job #2646, the Ziflow case).
-        text = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1\s*>", " ", r.text)
+        text = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1\s*>", " ", response.text)
         # The pair-matching regex above needs a real closing tag; malformed
         # HTML with an unclosed <style>/<script>/<noscript> leaves it (and
         # everything after it) untouched — measured directly: CSS/JS text
@@ -122,9 +137,9 @@ async def fetch_description(url: str) -> tuple[str | None, str | None]:
         text = re.split(r"(?is)<(?:script|style|noscript)\b", text, maxsplit=1)[0]
         text = re.sub(r"<[^>]+>", " ", text).strip()
         return re.sub(r"\s+", " ", text)[:8000], None
-    except Exception as e:
+    except Exception as error:
         return None, (
-            f"Error fetching URL: {e}\n"
+            f"Error fetching URL: {error}\n"
             f"For pages that require login (LinkedIn, etc.), provide "
             f"'company', 'title', and 'description' manually."
         )

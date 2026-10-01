@@ -13,14 +13,14 @@ def test_parse_args_sync():
 def test_parse_args_with_no_command_emits_usage_error_json_on_stdout(capsys):
     from moonlighter.tracking.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args([])
-    assert exc.value.code == 2
+    assert exit_info.value.code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "usage_error"
 
 
-async def test_run_sync_exits_0_with_the_updates_as_json(tmp_db):
+async def test_run_sync_exits_0_with_the_updates_as_json(temporary_database):
     from moonlighter.tracking import cli
 
     updates = [
@@ -46,7 +46,7 @@ async def test_run_sync_exits_0_with_the_updates_as_json(tmp_db):
     json.dumps(payload)
 
 
-async def test_run_sync_with_no_updates_exits_1(tmp_db):
+async def test_run_sync_with_no_updates_exits_1(temporary_database):
     from moonlighter.tracking import cli
 
     with (
@@ -58,7 +58,9 @@ async def test_run_sync_with_no_updates_exits_1(tmp_db):
     assert (payload, code) == ({"kind": "synced", "updates": []}, 1)
 
 
-def test_run_via_run_classifies_a_missing_gmail_token_as_an_expected_failure(tmp_db, capsys):
+def test_run_via_run_classifies_a_missing_gmail_token_as_an_expected_failure(
+    temporary_database, capsys
+):
     # Measured: moonlighter-email sync with no Gmail token lands on exit 3
     # with a full traceback today. A missing credential is a routine,
     # anticipated failure -- exit 1, kind "expected_failure" -- not a crash.
@@ -72,19 +74,19 @@ def test_run_via_run_classifies_a_missing_gmail_token_as_an_expected_failure(tmp
         patch.object(cli, "make_caller", return_value=object()),
         patch.object(cli, "sync_responses", new=AsyncMock(side_effect=GmailAuthError("no token"))),
     ):
-        args = cli.parse_args(["sync"])
-        code = run(lambda: cli._run(args), expected=cli.EXPECTED_FAILURES)
+        parsed_arguments = cli.parse_args(["sync"])
+        code = run(lambda: cli._run(parsed_arguments), expected=cli.EXPECTED_FAILURES)
     assert code == 1
     out = json.loads(capsys.readouterr().out)
     assert out["kind"] == "expected_failure"
     assert out["type"] == "GmailAuthError"
 
 
-async def test_run_register_exits_0_and_prints_the_alias(tmp_db):
+async def test_run_register_exits_0_and_prints_the_alias(temporary_database):
     from moonlighter.tracking import cli
     from moonlighter.tracking.register import RegisterKind, RegisterResult
 
-    r = RegisterResult(
+    register_result = RegisterResult(
         RegisterKind.REGISTERED,
         7,
         application_id=1,
@@ -96,7 +98,7 @@ async def test_run_register_exits_0_and_prints_the_alias(tmp_db):
         patch.object(
             cli, "bootstrap", return_value=({"email": {"address": "jane@example.com"}}, {})
         ),
-        patch.object(cli, "register_application", return_value=r),
+        patch.object(cli, "register_application", return_value=register_result),
     ):
         payload, code = await cli._run(cli.parse_args(["register", "7"]))
     assert (payload["kind"], payload["alias"], code) == (
@@ -106,14 +108,14 @@ async def test_run_register_exits_0_and_prints_the_alias(tmp_db):
     )
 
 
-async def test_run_register_unknown_job_exits_1(tmp_db):
+async def test_run_register_unknown_job_exits_1(temporary_database):
     from moonlighter.tracking import cli
     from moonlighter.tracking.register import RegisterKind, RegisterResult
 
-    r = RegisterResult(RegisterKind.JOB_NOT_FOUND, 7, error="Job 7 not found.")
+    register_result = RegisterResult(RegisterKind.JOB_NOT_FOUND, 7, error="Job 7 not found.")
     with (
         patch.object(cli, "bootstrap", return_value=({}, {})),
-        patch.object(cli, "register_application", return_value=r),
+        patch.object(cli, "register_application", return_value=register_result),
     ):
         payload, code = await cli._run(cli.parse_args(["register", "7"]))
     assert (payload["kind"], code) == ("job_not_found", 1)
@@ -126,7 +128,7 @@ def test_email_keeps_its_grammar_and_gains_doctor():
     assert parse_args(["sync"]).command == "sync"
 
 
-async def test_email_doctor_returns_the_doctor_payload(tmp_db):
+async def test_email_doctor_returns_the_doctor_payload(temporary_database):
     from moonlighter.tracking import cli
 
     with patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)):
@@ -137,7 +139,7 @@ async def test_email_doctor_returns_the_doctor_payload(tmp_db):
 def test_email_help_carries_the_slice_epilog(capsys):
     from moonlighter.tracking.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args(["--help"])
-    assert exc.value.code == 0
+    assert exit_info.value.code == 0
     assert "installed:" in capsys.readouterr().out

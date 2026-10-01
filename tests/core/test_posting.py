@@ -32,16 +32,16 @@ def _client(response_json):
     response.json.return_value = response_json
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    return cls, client
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    return client_class, client
 
 
 @pytest.mark.asyncio
 async def test_greenhouse_url_routes_to_board_api():
-    cls, client = _client(GREENHOUSE_JOB)
-    with patch("httpx.AsyncClient", cls):
+    client_class, client = _client(GREENHOUSE_JOB)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://boards.greenhouse.io/gitlab/jobs/8503792002")
     assert posting == FetchedPosting(
         company="GitLab", title="Account Executive", description="Build things."
@@ -53,9 +53,33 @@ async def test_greenhouse_url_routes_to_board_api():
 
 
 @pytest.mark.asyncio
+async def test_greenhouse_posting_carries_its_location():
+    """add_job hands the location to the evaluator's regional filter; without it the
+    LLM judges eligibility from the description alone (the 2026-08-21 gitlab class)."""
+    job = {**GREENHOUSE_JOB, "location": {"name": "Bangalore, India"}}
+    client_class, _client_mock = _client(job)
+    with patch("httpx.AsyncClient", client_class):
+        posting = await fetch_posting_via_ats("https://boards.greenhouse.io/gitlab/jobs/8503792002")
+    assert posting is not None
+    assert posting.location == "Bangalore, India"
+    assert posting.remote is False
+
+
+@pytest.mark.asyncio
+async def test_recruitee_posting_carries_location_and_remote_flag():
+    offers = {"offers": [{**RECRUITEE_OFFERS["offers"][0], "location": "Utrecht", "remote": True}]}
+    client_class, _client_mock = _client(offers)
+    with patch("httpx.AsyncClient", client_class):
+        posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
+    assert posting is not None
+    assert posting.location == "Utrecht"
+    assert posting.remote is True
+
+
+@pytest.mark.asyncio
 async def test_offer_shaped_url_routes_to_offers_api_on_same_host():
-    cls, client = _client(RECRUITEE_OFFERS)
-    with patch("httpx.AsyncClient", cls):
+    client_class, client = _client(RECRUITEE_OFFERS)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
     assert posting is not None
     assert posting.company == "Channable"
@@ -76,10 +100,10 @@ async def test_offer_url_on_non_recruitee_host_falls_back_to_none():
     response = MagicMock(status_code=404)
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", cls):
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://weird.site/o/thing")
     assert posting is None
 
@@ -91,26 +115,26 @@ async def test_greenhouse_fetch_error_returns_none():
     response = MagicMock(status_code=404)
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", cls):
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://boards.greenhouse.io/gitlab/jobs/8503792002")
     assert posting is None
 
 
 @pytest.mark.asyncio
 async def test_greenhouse_non_dict_response_returns_none():
-    cls, _client_mock = _client(["unexpected", "shape"])
-    with patch("httpx.AsyncClient", cls):
+    client_class, _client_mock = _client(["unexpected", "shape"])
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://boards.greenhouse.io/gitlab/jobs/8503792002")
     assert posting is None
 
 
 @pytest.mark.asyncio
 async def test_recruitee_non_dict_response_returns_none():
-    cls, _client_mock = _client(["unexpected", "shape"])
-    with patch("httpx.AsyncClient", cls):
+    client_class, _client_mock = _client(["unexpected", "shape"])
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
     assert posting is None
 
@@ -136,8 +160,8 @@ async def test_recruitee_offer_prefix_collision_does_not_match_longer_slug():
             },
         ]
     }
-    cls, _client_mock = _client(collision)
-    with patch("httpx.AsyncClient", cls):
+    client_class, _client_mock = _client(collision)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
     assert posting is not None
     assert posting.title == "Backend Engineer"
@@ -165,8 +189,8 @@ async def test_recruitee_longer_offer_slug_still_matches_itself():
             },
         ]
     }
-    cls, _client_mock = _client(collision)
-    with patch("httpx.AsyncClient", cls):
+    client_class, _client_mock = _client(collision)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats(
             "https://jobs.channable.com/o/backend-engineer-senior"
         )
@@ -187,8 +211,8 @@ async def test_recruitee_offer_not_in_list_returns_none():
             }
         ]
     }
-    cls, _client_mock = _client(other_offer)
-    with patch("httpx.AsyncClient", cls):
+    client_class, _client_mock = _client(other_offer)
+    with patch("httpx.AsyncClient", client_class):
         posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
     assert posting is None
 
@@ -198,10 +222,10 @@ async def test_fetch_description_drops_style_and_script_contents():
     response = MagicMock(status_code=200, text=html_page)
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", cls):
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", client_class):
         description, error = await fetch_description("https://example.com/job")
     assert error is None
     assert description == "Real text"
@@ -218,10 +242,10 @@ async def test_fetch_description_truncates_at_an_unclosed_style_tag():
     response = MagicMock(status_code=200, text=html_page)
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", cls):
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", client_class):
         description, error = await fetch_description("https://example.com/job")
     assert error is None
     assert description == "Real desc before"
@@ -233,10 +257,10 @@ async def test_fetch_description_truncates_at_an_unclosed_script_tag():
     response = MagicMock(status_code=200, text=html_page)
     client = AsyncMock()
     client.get = AsyncMock(return_value=response)
-    cls = MagicMock()
-    cls.return_value.__aenter__ = AsyncMock(return_value=client)
-    cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", cls):
+    client_class = MagicMock()
+    client_class.return_value.__aenter__ = AsyncMock(return_value=client)
+    client_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("httpx.AsyncClient", client_class):
         description, error = await fetch_description("https://example.com/job")
     assert error is None
     assert description == "Real desc"
@@ -258,3 +282,17 @@ def test_strip_tags_is_public_so_other_packages_can_import_it_directly():
     # leading underscore would make that a private-symbol reach-in.
     assert strip_tags("<p>Hello  world</p>") == "Hello world"
     assert strip_tags("  ") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "remote"), [("false", False), ("true", True), (0, False), (None, False)]
+)
+async def test_recruitee_remote_flag_is_read_as_a_value_not_as_truthiness(flag, remote):
+    """bool("false") is True: a string flag must not make an office job remote."""
+    offers = {"offers": [{**RECRUITEE_OFFERS["offers"][0], "location": "Utrecht", "remote": flag}]}
+    client_class, _client_mock = _client(offers)
+    with patch("httpx.AsyncClient", client_class):
+        posting = await fetch_posting_via_ats("https://jobs.channable.com/o/backend-engineer")
+    assert posting is not None
+    assert posting.remote is remote

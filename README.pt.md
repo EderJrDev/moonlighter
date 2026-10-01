@@ -8,7 +8,7 @@ Escaneia os portais de vagas que você escolhe, dá uma nota a cada vaga compara
 
 Feito por Alberto Cavalcanti · [Fale comigo no LinkedIn](https://www.linkedin.com/in/albertosca/) · [Leia a documentação](https://albertosca.github.io/moonlighter/pt/) · [Instale](https://albertosca.github.io/moonlighter/pt/getting-started/install/)
 
-<!-- facts -->1.700+ testes · 100% de cobertura de branches (gate no CI) · 5 pacotes no PyPI · mypy strict<!-- /facts -->
+<!-- facts -->1.900+ testes · 100% de cobertura de branches (gate no CI) · 5 pacotes no PyPI · mypy strict<!-- /facts -->
 
 [![PyPI](https://img.shields.io/pypi/v/moonlighter)](https://pypi.org/project/moonlighter/) [![Python](https://img.shields.io/badge/python-3.14%2B-blue)](https://pypi.org/project/moonlighter/) [![CI](https://github.com/albertosca/moonlighter/actions/workflows/ci.yml/badge.svg)](https://github.com/albertosca/moonlighter/actions/workflows/ci.yml) [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE) [![Lint: ruff](https://img.shields.io/badge/lint-ruff-261230)](https://github.com/albertosca/moonlighter/actions/workflows/ci.yml) [![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/albertosca/moonlighter/actions/workflows/ci.yml)
 
@@ -105,7 +105,7 @@ Você precisa do [uv](https://docs.astral.sh/uv/) (ele baixa o Python 3.14 para 
 - [CV sob medida](https://albertosca.github.io/moonlighter/pt/guides/tailored-cv/) — um CV LaTeX de uma página por vaga, montado a partir dos bullets que você curou
 - [Banco de respostas](https://albertosca.github.io/moonlighter/pt/guides/answer-bank/) — respostas de triagem que você aprovou, reaproveitadas na próxima candidatura
 - [Linha de comando](https://albertosca.github.io/moonlighter/pt/reference/cli/) — uma CLI em JSON por fatia, códigos de saída, o que cada instalação oferece
-- [Ferramentas MCP](https://albertosca.github.io/moonlighter/pt/reference/mcp-tools/) — as 17 ferramentas que o Claude chama por você
+- [Ferramentas MCP](https://albertosca.github.io/moonlighter/pt/reference/mcp-tools/) — as 18 ferramentas que o Claude chama por você
 - [Extensões](https://albertosca.github.io/moonlighter/pt/guides/extensions/) — adicione uma fonte de vagas como um pacote separado
 
 Dúvidas e solução de problemas: [Perguntas frequentes](https://albertosca.github.io/moonlighter/pt/faq/). Para mexer no código: [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês).

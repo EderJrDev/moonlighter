@@ -8,22 +8,26 @@ from moonlighter.application.assisted.results import SheetKind, SheetResult
 def test_parse_args_prepare_with_optional_paste():
     from moonlighter.application.cli import parse_args
 
-    args = parse_args(["prepare", "42"])
-    assert (args.command, args.job_id, args.paste) == ("prepare", 42, None)
+    parsed_arguments = parse_args(["prepare", "42"])
+    assert (parsed_arguments.command, parsed_arguments.job_id, parsed_arguments.paste) == (
+        "prepare",
+        42,
+        None,
+    )
     assert parse_args(["prepare", "42", "--paste", "-"]).paste == "-"
 
 
 def test_parse_args_prepare_with_a_non_int_job_id_emits_usage_error_json_on_stdout(capsys):
     from moonlighter.application.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args(["prepare", "not-a-number"])
-    assert exc.value.code == 2
+    assert exit_info.value.code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "usage_error"
 
 
-async def test_run_prepare_via_api_exits_0_with_the_sheet_as_json(tmp_db):
+async def test_run_prepare_via_api_exits_0_with_the_sheet_as_json(temporary_database):
     from moonlighter.application import cli
 
     result = SheetResult(
@@ -38,7 +42,9 @@ async def test_run_prepare_via_api_exits_0_with_the_sheet_as_json(tmp_db):
     json.dumps(payload)
 
 
-async def test_run_prepare_with_paste_file_reads_it_and_uses_the_paste_path(tmp_db, tmp_path):
+async def test_run_prepare_with_paste_file_reads_it_and_uses_the_paste_path(
+    temporary_database, tmp_path
+):
     from moonlighter.application import cli
 
     page = tmp_path / "page.txt"
@@ -56,7 +62,7 @@ async def test_run_prepare_with_paste_file_reads_it_and_uses_the_paste_path(tmp_
     assert paste.await_args.args[1] == "Full name\nEmail"
 
 
-async def test_run_prepare_with_paste_dash_reads_stdin(tmp_db, monkeypatch):
+async def test_run_prepare_with_paste_dash_reads_stdin(temporary_database, monkeypatch):
     import io
 
     from moonlighter.application import cli
@@ -74,7 +80,7 @@ async def test_run_prepare_with_paste_dash_reads_stdin(tmp_db, monkeypatch):
     assert paste.await_args.args[1] == "pasted page"
 
 
-async def test_run_prepare_job_not_found_exits_1(tmp_db):
+async def test_run_prepare_job_not_found_exits_1(temporary_database):
     from moonlighter.application import cli
 
     result = SheetResult(
@@ -93,7 +99,7 @@ async def test_run_prepare_job_not_found_exits_1(tmp_db):
     assert (payload["kind"], payload["error"], code) == ("job_not_found", "Job 42 not found.", 1)
 
 
-def test_run_via_run_classifies_a_missing_paste_file_as_a_usage_error(tmp_db, capsys):
+def test_run_via_run_classifies_a_missing_paste_file_as_a_usage_error(temporary_database, capsys):
     # Measured: moonlighter-apply prepare 1 --paste /nonexistent lands on exit
     # 3 (FileNotFoundError) today. A bad --paste path is a bad argument, not
     # a crash -- exit 2, kind "usage_error". Goes THROUGH run() with the real
@@ -102,15 +108,15 @@ def test_run_via_run_classifies_a_missing_paste_file_as_a_usage_error(tmp_db, ca
     from moonlighter.core.cli import run
 
     with patch.object(cli, "bootstrap", return_value=({}, {})):
-        args = cli.parse_args(["prepare", "42", "--paste", "/nonexistent/file"])
-        code = run(lambda: cli._run(args), usage=cli.USAGE_ERRORS)
+        parsed_arguments = cli.parse_args(["prepare", "42", "--paste", "/nonexistent/file"])
+        code = run(lambda: cli._run(parsed_arguments), usage=cli.USAGE_ERRORS)
     assert code == 2
     out = json.loads(capsys.readouterr().out)
     assert out["kind"] == "usage_error"
     assert out["type"] == "FileNotFoundError"
 
 
-async def test_run_prepare_with_url_ingests_then_prepares(tmp_db):
+async def test_run_prepare_with_url_ingests_then_prepares(temporary_database):
     from moonlighter.application import cli
     from moonlighter.core.db import Job, init_db
 
@@ -132,7 +138,7 @@ async def test_run_prepare_with_url_ingests_then_prepares(tmp_db):
     assert prepare.await_args.args[0] == job.id
 
 
-async def test_run_prepare_with_an_unreadable_url_exits_1_with_its_own_kind(tmp_db):
+async def test_run_prepare_with_an_unreadable_url_exits_1_with_its_own_kind(temporary_database):
     from moonlighter.application import cli
 
     with (
@@ -156,17 +162,21 @@ def test_parse_args_prepare_requires_exactly_one_of_job_id_and_url(capsys):
     from moonlighter.application.cli import parse_args
 
     for argv in (["prepare"], ["prepare", "42", "--url", "https://x"]):
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(SystemExit) as exit_info:
             parse_args(argv)
-        assert exc.value.code == 2
+        assert exit_info.value.code == 2
         assert json.loads(capsys.readouterr().out)["kind"] == "usage_error"
 
 
 def test_parse_args_prepare_with_url_and_company_title_overrides():
     from moonlighter.application.cli import parse_args
 
-    args = parse_args(["prepare", "--url", "u", "--company", "Acme", "--title", "Eng"])
-    assert (args.url, args.company, args.title) == ("u", "Acme", "Eng")
+    parsed_arguments = parse_args(["prepare", "--url", "u", "--company", "Acme", "--title", "Eng"])
+    assert (parsed_arguments.url, parsed_arguments.company, parsed_arguments.title) == (
+        "u",
+        "Acme",
+        "Eng",
+    )
 
 
 def test_parse_args_prepare_company_or_title_without_url_is_a_usage_error(capsys):
@@ -178,13 +188,13 @@ def test_parse_args_prepare_company_or_title_without_url_is_a_usage_error(capsys
         ["prepare", "42", "--company", "Acme"],
         ["prepare", "42", "--title", "Eng"],
     ):
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(SystemExit) as exit_info:
             parse_args(argv)
-        assert exc.value.code == 2
+        assert exit_info.value.code == 2
         assert json.loads(capsys.readouterr().out)["kind"] == "usage_error"
 
 
-async def test_run_prepare_with_url_passes_company_and_title_through(tmp_db):
+async def test_run_prepare_with_url_passes_company_and_title_through(temporary_database):
     from moonlighter.application import cli
     from moonlighter.core.db import Job, init_db
 
@@ -216,7 +226,7 @@ def test_apply_keeps_its_grammar_and_gains_doctor():
     assert parse_args(["prepare", "42"]).command == "prepare"
 
 
-async def test_apply_doctor_returns_the_doctor_payload(tmp_db):
+async def test_apply_doctor_returns_the_doctor_payload(temporary_database):
     from moonlighter.application import cli
 
     with patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)):
@@ -224,12 +234,57 @@ async def test_apply_doctor_returns_the_doctor_payload(tmp_db):
     assert (payload, code) == ({"kind": "doctor"}, 0)
 
 
+async def test_apply_doctor_stays_offline_without_the_flag(temporary_database):
+    from moonlighter.application import cli
+
+    report = AsyncMock()
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)),
+        patch.object(cli, "link_report", report),
+    ):
+        payload, _ = await cli._run(cli.parse_args(["doctor"]))
+    report.assert_not_awaited()
+    assert "links" not in payload
+
+
+async def test_apply_doctor_online_reports_the_cv_links_and_fails_on_a_broken_one(
+    temporary_database,
+):
+    from moonlighter.application import cli
+
+    links = [
+        {"url": "https://github.com/albertosca", "status": 200, "ok": True, "note": None},
+        {"url": "https://github.com/albertoalbuquerque", "status": 404, "ok": False, "note": None},
+    ]
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)),
+        patch.object(cli, "link_report", AsyncMock(return_value=links)),
+    ):
+        payload, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    assert payload["links"] == links
+    assert code == 1
+
+
+async def test_apply_doctor_online_keeps_exit_0_when_links_are_fine_or_unverified(
+    temporary_database,
+):
+    from moonlighter.application import cli
+
+    links = [{"url": "https://www.linkedin.com/in/x", "status": 999, "ok": None, "note": "n"}]
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)),
+        patch.object(cli, "link_report", AsyncMock(return_value=links)),
+    ):
+        _, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    assert code == 0
+
+
 def test_apply_help_carries_the_slice_epilog(capsys):
     from moonlighter.application.cli import parse_args
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exit_info:
         parse_args(["--help"])
-    assert exc.value.code == 0
+    assert exit_info.value.code == 0
     assert "installed:" in capsys.readouterr().out
 
 
@@ -289,14 +344,16 @@ def test_bootstrap_cv_subcommand_reports_a_bootstrap_error_as_expected_failure(m
         raise BootstrapError("a pool already exists")
 
     monkeypatch.setattr(cli, "bootstrap_cv_pool", _fake_bootstrap)
-    args = cli.parse_args(["bootstrap-cv"])
-    code = run(lambda: cli._run(args), expected=cli.EXPECTED_ERRORS)
+    parsed_arguments = cli.parse_args(["bootstrap-cv"])
+    code = run(lambda: cli._run(parsed_arguments), expected=cli.EXPECTED_ERRORS)
     assert code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["kind"] == "expected_failure"
 
 
-async def test_bootstrap_cv_skip_records_the_decline_without_calling_the_llm(monkeypatch, tmp_db):
+async def test_bootstrap_cv_skip_records_the_decline_without_calling_the_llm(
+    monkeypatch, temporary_database
+):
     from moonlighter.application import cli
     from moonlighter.core.db import cv_bootstrap_declined, init_db
 
@@ -305,10 +362,45 @@ async def test_bootstrap_cv_skip_records_the_decline_without_calling_the_llm(mon
     monkeypatch.setattr(
         cli,
         "bootstrap_cv_pool",
-        lambda *a, **k: (_ for _ in ()).throw(
+        lambda *positional_arguments, **keyword_arguments: (_ for _ in ()).throw(
             AssertionError("must not draft when --skip is given")
         ),
     )
     _payload, code = await cli._run(cli.parse_args(["bootstrap-cv", "--skip"]))
     assert code == 0
     assert cv_bootstrap_declined() is True
+
+
+async def test_apply_doctor_online_reports_a_broken_config_instead_of_crashing(
+    temporary_database,
+):
+    """--online exists to diagnose; a config that does not load must come back in
+    the payload the way plain doctor reports it, not as a crash (exit 3)."""
+    import yaml
+    from moonlighter.application import cli
+
+    report = AsyncMock()
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 1)),
+        patch.object(cli, "load_config", side_effect=yaml.YAMLError("bad yaml")),
+        patch.object(cli, "link_report", report),
+    ):
+        payload, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    report.assert_not_awaited()
+    assert payload["links"] is None
+    assert "bad yaml" in payload["links_error"]
+    assert code == 1
+
+
+async def test_apply_doctor_online_says_when_there_was_nothing_to_check(temporary_database):
+    """An empty list read the same as "every link works" (2026-09-29 review)."""
+    from moonlighter.application import cli
+
+    with (
+        patch.object(cli, "doctor_payload", return_value=({"kind": "doctor"}, 0)),
+        patch.object(cli, "link_report", AsyncMock(return_value=[])),
+    ):
+        payload, code = await cli._run(cli.parse_args(["doctor", "--online"]))
+    assert payload["links"] == []
+    assert "no CV template" in payload["links_note"]
+    assert code == 0

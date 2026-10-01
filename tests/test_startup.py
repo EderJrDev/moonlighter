@@ -18,12 +18,35 @@ def _fake_claude_on_path():
 
 def test_validate_startup_empty_profile_produces_warn():
     warnings = validate_startup(config={}, profile={})
-    assert any(w.level == "warn" and "profile" in w.message.lower() for w in warnings)
+    assert any(
+        warning.level == "warn" and "profile" in warning.message.lower() for warning in warnings
+    )
 
 
 def test_validate_startup_non_empty_profile_no_profile_warning():
     warnings = validate_startup(config={}, profile={"skills": [{"name": "Python"}]})
-    assert not any("profile" in w.message.lower() for w in warnings)
+    assert not any("profile" in warning.message.lower() for warning in warnings)
+
+
+# ── criteria.location_precedence ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["Generic", "specfic", "global"])
+def test_an_unknown_location_precedence_warns_and_names_the_valid_values(value):
+    """A typo silently meant "specific" (2026-09-29 review): say so at startup."""
+    profile = {"criteria": {"location_precedence": value}}
+    warnings = validate_startup(config={}, profile=profile)
+    messages = [warning.message for warning in warnings if "location_precedence" in warning.message]
+    assert len(messages) == 1
+    assert value in messages[0] and "specific" in messages[0] and "generic" in messages[0]
+
+
+@pytest.mark.parametrize(
+    "profile", [{"criteria": {"location_precedence": "generic"}}, {"criteria": {}}, {"skills": []}]
+)
+def test_a_valid_or_absent_location_precedence_is_quiet(profile):
+    warnings = validate_startup(config={}, profile=profile)
+    assert not any("location_precedence" in warning.message for warning in warnings)
 
 
 # ── ANTHROPIC_API_KEY ─────────────────────────────────────────────────────────
@@ -35,13 +58,15 @@ def test_validate_startup_cli_backend_without_the_claude_binary_produces_error(m
     learned about it mid-scan, once per job, instead of at startup."""
     monkeypatch.setattr("moonlighter.startup.shutil.which", lambda _: None)
     warnings = validate_startup(config={"llm_backend": "cli"}, profile={"skills": []})
-    assert any(w.level == "error" and "claude" in w.message.lower() for w in warnings)
+    assert any(
+        warning.level == "error" and "claude" in warning.message.lower() for warning in warnings
+    )
 
 
 def test_validate_startup_cli_backend_with_the_claude_binary_is_quiet(monkeypatch):
     monkeypatch.setattr("moonlighter.startup.shutil.which", lambda _: "/usr/local/bin/claude")
     warnings = validate_startup(config={"llm_backend": "cli"}, profile={"skills": []})
-    assert not any("claude" in w.message.lower() for w in warnings)
+    assert not any("claude" in warning.message.lower() for warning in warnings)
 
 
 def test_validate_startup_omitted_backend_does_not_demand_an_api_key(monkeypatch):
@@ -50,19 +75,21 @@ def test_validate_startup_omitted_backend_does_not_demand_an_api_key(monkeypatch
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr("moonlighter.startup.shutil.which", lambda _: "/usr/local/bin/claude")
     warnings = validate_startup(config={}, profile={"skills": []})
-    assert not any("ANTHROPIC_API_KEY" in w.message for w in warnings)
+    assert not any("ANTHROPIC_API_KEY" in warning.message for warning in warnings)
 
 
 def test_validate_startup_missing_api_key_produces_error(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     warnings = validate_startup(config={"llm_backend": "api"}, profile={"skills": []})
-    assert any(w.level == "error" and "ANTHROPIC_API_KEY" in w.message for w in warnings)
+    assert any(
+        warning.level == "error" and "ANTHROPIC_API_KEY" in warning.message for warning in warnings
+    )
 
 
 def test_validate_startup_api_key_present_no_api_error(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     warnings = validate_startup(config={"llm_backend": "api"}, profile={"skills": []})
-    assert not any("ANTHROPIC_API_KEY" in w.message for w in warnings)
+    assert not any("ANTHROPIC_API_KEY" in warning.message for warning in warnings)
 
 
 def test_validate_startup_cli_backend_skips_api_key_error(monkeypatch):
@@ -70,7 +97,7 @@ def test_validate_startup_cli_backend_skips_api_key_error(monkeypatch):
     must not raise an error."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     warnings = validate_startup(config={"llm_backend": "cli"}, profile={"skills": []})
-    assert not any("ANTHROPIC_API_KEY" in w.message for w in warnings)
+    assert not any("ANTHROPIC_API_KEY" in warning.message for warning in warnings)
 
 
 def test_validate_startup_cursor_backend_without_the_cli_produces_error(monkeypatch):
@@ -112,7 +139,7 @@ def test_validate_startup_missing_cv_produces_warn(tmp_path):
         profile={"skills": []},
         cv_path=str(tmp_path / "nonexistent.pdf"),
     )
-    assert any(w.level == "warn" and "cv" in w.message.lower() for w in warnings)
+    assert any(warning.level == "warn" and "cv" in warning.message.lower() for warning in warnings)
 
 
 def test_validate_startup_default_cv_path_resolves_under_moonlighter_home(monkeypatch, tmp_path):
@@ -120,7 +147,7 @@ def test_validate_startup_default_cv_path_resolves_under_moonlighter_home(monkey
     relative to the installed package (which is an ephemeral cache dir under uvx)."""
     monkeypatch.setenv("MOONLIGHTER_HOME", str(tmp_path))
     warnings = validate_startup(config={}, profile={"skills": []})
-    cv_warning = next(w for w in warnings if "cv" in w.message.lower())
+    cv_warning = next(warning for warning in warnings if "cv" in warning.message.lower())
     assert str(tmp_path / "cv.pdf") in cv_warning.message
 
 
@@ -134,7 +161,7 @@ def test_validate_startup_honours_a_configured_cv_default(tmp_path):
         config={"cv": {"default": str(cv)}},
         profile={"skills": []},
     )
-    assert not any("cv" in w.message.lower() for w in warnings)
+    assert not any("cv" in warning.message.lower() for warning in warnings)
 
 
 def test_validate_startup_names_the_configured_cv_when_it_is_missing(tmp_path):
@@ -145,7 +172,7 @@ def test_validate_startup_names_the_configured_cv_when_it_is_missing(tmp_path):
         config={"cv": {"default": str(configured)}},
         profile={"skills": []},
     )
-    cv_warning = next(w for w in warnings if "cv" in w.message.lower())
+    cv_warning = next(warning for warning in warnings if "cv" in warning.message.lower())
     assert str(configured) in cv_warning.message
 
 
@@ -160,7 +187,7 @@ def test_validate_startup_resolves_a_relative_cv_default_from_moonlighter_home(
         config={"cv": {"default": "my-cv.pdf"}},
         profile={"skills": []},
     )
-    assert not any("cv" in w.message.lower() for w in warnings)
+    assert not any("cv" in warning.message.lower() for warning in warnings)
 
 
 def test_validate_startup_cv_present_no_cv_warning(tmp_path):
@@ -171,7 +198,7 @@ def test_validate_startup_cv_present_no_cv_warning(tmp_path):
         profile={"skills": []},
         cv_path=str(cv),
     )
-    assert not any("cv" in w.message.lower() for w in warnings)
+    assert not any("cv" in warning.message.lower() for warning in warnings)
 
 
 # ── browser path ──────────────────────────────────────────────────────────────
@@ -182,7 +209,9 @@ def test_validate_startup_missing_browser_produces_warn():
         config={"browser_path": "/nonexistent/Chrome"},
         profile={"skills": []},
     )
-    assert any(w.level == "warn" and "browser" in w.message.lower() for w in warnings)
+    assert any(
+        warning.level == "warn" and "browser" in warning.message.lower() for warning in warnings
+    )
 
 
 def test_validate_startup_legacy_brave_path_still_works(tmp_path):
@@ -193,7 +222,7 @@ def test_validate_startup_legacy_brave_path_still_works(tmp_path):
         config={"brave_path": str(brave)},
         profile={"skills": []},
     )
-    assert not any("browser" in w.message.lower() for w in warnings)
+    assert not any("browser" in warning.message.lower() for warning in warnings)
 
 
 # ── all clear ─────────────────────────────────────────────────────────────────
@@ -210,7 +239,7 @@ def test_validate_startup_all_ok_returns_no_errors(monkeypatch, tmp_path):
         profile={"skills": [{"name": "Python"}]},
         cv_path=str(cv),
     )
-    assert not any(w.level == "error" for w in warnings)
+    assert not any(warning.level == "error" for warning in warnings)
 
 
 # ── return type ───────────────────────────────────────────────────────────────
@@ -219,4 +248,4 @@ def test_validate_startup_all_ok_returns_no_errors(monkeypatch, tmp_path):
 def test_validate_startup_returns_list_of_startup_warnings():
     result = validate_startup(config={}, profile={})
     assert isinstance(result, list)
-    assert all(isinstance(w, StartupWarning) for w in result)
+    assert all(isinstance(warning, StartupWarning) for warning in result)

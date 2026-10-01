@@ -8,20 +8,20 @@ from moonlighter.core.migrations import MIGRATIONS
 from peewee import IntegrityError
 
 
-def _make_job(**kwargs):
-    """Helper: creates a Job with minimal defaults, overridden by kwargs."""
+def _make_job(**overrides):
+    """Helper: creates a Job with minimal defaults, overridden by overrides."""
     defaults = {
         "source": "greenhouse",
         "company": "Stripe",
         "title": "Senior Engineer",
         "url": "https://boards.greenhouse.io/stripe/jobs/123",
     }
-    defaults.update(kwargs)
+    defaults.update(overrides)
     return Job.create(**defaults)
 
 
-def test_init_creates_tables(tmp_db):
-    os.environ["MOONLIGHTER_DB_PATH"] = tmp_db
+def test_init_creates_tables(temporary_database):
+    os.environ["MOONLIGHTER_DB_PATH"] = temporary_database
     init_db()
     # Tables exist and accept writes
     job = Job.create(
@@ -34,8 +34,8 @@ def test_init_creates_tables(tmp_db):
     assert job.status == "new"
 
 
-def test_scan_log_dedup(tmp_db):
-    os.environ["MOONLIGHTER_DB_PATH"] = tmp_db
+def test_scan_log_dedup(temporary_database):
+    os.environ["MOONLIGHTER_DB_PATH"] = temporary_database
     init_db()
     ScanLog.create(job_url="https://example.com/job/1", source="greenhouse")
     urls = {row.job_url for row in ScanLog.select()}
@@ -48,7 +48,7 @@ def test_scan_log_dedup(tmp_db):
 # --- Job: salary fields ---
 
 
-def test_job_salary_fields(tmp_db):
+def test_job_salary_fields(temporary_database):
     init_db()
     job = _make_job(
         salary_min=150000,
@@ -66,7 +66,7 @@ def test_job_salary_fields(tmp_db):
 # --- Job: nullable fields ---
 
 
-def test_job_nullable_fields_default_none(tmp_db):
+def test_job_nullable_fields_default_none(temporary_database):
     init_db()
     job = _make_job()
     saved = Job.get_by_id(job.id)
@@ -79,7 +79,7 @@ def test_job_nullable_fields_default_none(tmp_db):
 # --- Job: status default ---
 
 
-def test_job_status_default(tmp_db):
+def test_job_status_default(temporary_database):
     init_db()
     job = _make_job()
     assert job.status == "new"
@@ -88,7 +88,7 @@ def test_job_status_default(tmp_db):
 # --- Job: unique URL ---
 
 
-def test_job_url_unique_raises(tmp_db):
+def test_job_url_unique_raises(temporary_database):
     init_db()
     _make_job(url="https://example.com/job/dup")
     with pytest.raises(IntegrityError):
@@ -98,25 +98,25 @@ def test_job_url_unique_raises(tmp_db):
 # --- Job: get_caveats ---
 
 
-def test_job_get_caveats_valid_json(tmp_db):
+def test_job_get_caveats_valid_json(temporary_database):
     init_db()
     job = _make_job(caveats='["US only", "requires relocation"]')
     assert job.get_caveats() == ["US only", "requires relocation"]
 
 
-def test_job_get_caveats_empty_string(tmp_db):
+def test_job_get_caveats_empty_string(temporary_database):
     init_db()
     job = _make_job(caveats="")
     assert job.get_caveats() == []
 
 
-def test_job_get_caveats_null(tmp_db):
+def test_job_get_caveats_null(temporary_database):
     init_db()
     job = _make_job()  # caveats not set → None
     assert job.get_caveats() == []
 
 
-def test_job_get_caveats_invalid_json(tmp_db):
+def test_job_get_caveats_invalid_json(temporary_database):
     init_db()
     job = _make_job(caveats="not json")
     with pytest.raises(json.JSONDecodeError):
@@ -126,7 +126,7 @@ def test_job_get_caveats_invalid_json(tmp_db):
 # --- Job: timestamps ---
 
 
-def test_job_found_at_is_recent(tmp_db):
+def test_job_found_at_is_recent(temporary_database):
     init_db()
     before = datetime.datetime.now()
     job = _make_job()
@@ -138,22 +138,22 @@ def test_job_found_at_is_recent(tmp_db):
     )
 
 
-def test_job_posted_at_nullable(tmp_db):
+def test_job_posted_at_nullable(temporary_database):
     init_db()
     job = _make_job(posted_at=None)
     results = list(Job.select().where(Job.posted_at.is_null(True)))
-    assert any(r.id == job.id for r in results)
+    assert any(result.id == job.id for result in results)
 
 
-def test_job_closed_at_is_null_by_default(tmp_db):
-    os.environ["MOONLIGHTER_DB_PATH"] = tmp_db
+def test_job_closed_at_is_null_by_default(temporary_database):
+    os.environ["MOONLIGHTER_DB_PATH"] = temporary_database
     init_db()
     job = _make_job()
     assert job.closed_at is None
 
 
-def test_job_closed_at_stored_and_retrieved(tmp_db):
-    os.environ["MOONLIGHTER_DB_PATH"] = tmp_db
+def test_job_closed_at_stored_and_retrieved(temporary_database):
+    os.environ["MOONLIGHTER_DB_PATH"] = temporary_database
     init_db()
     when = datetime.datetime(2026, 7, 1, 12, 0, 0)
     job = _make_job(status="archived", closed_at=when)
@@ -162,11 +162,11 @@ def test_job_closed_at_stored_and_retrieved(tmp_db):
     assert saved.closed_at == when
 
 
-def test_init_db_migrates_old_job_table(tmp_db):
+def test_init_db_migrates_old_job_table(temporary_database):
     """Old 'job' table (without closed_at) → init_db adds the column via ALTER TABLE."""
     from moonlighter.core.db import db
 
-    db.init(tmp_db)
+    db.init(temporary_database)
     db.connect(reuse_if_open=True)
     db.execute_sql("DROP TABLE IF EXISTS job")
     db.execute_sql(
@@ -178,21 +178,21 @@ def test_init_db_migrates_old_job_table(tmp_db):
     init_db()  # runs the safe migration
 
     cursor = db.execute_sql("PRAGMA table_info(job)")
-    cols = {row[1] for row in cursor.fetchall()}
-    assert "closed_at" in cols
+    columns = {row[1] for row in cursor.fetchall()}
+    assert "closed_at" in columns
 
 
 # --- Application ---
 
 
-def test_application_create_default_status(tmp_db):
+def test_application_create_default_status(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job)
     assert app.status == "draft"
 
 
-def test_application_get_form_data_valid(tmp_db):
+def test_application_get_form_data_valid(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job, form_data='{"Why Stripe?": "Great mission"}')
@@ -200,14 +200,14 @@ def test_application_get_form_data_valid(tmp_db):
     assert data["Why Stripe?"] == "Great mission"
 
 
-def test_application_get_form_data_null(tmp_db):
+def test_application_get_form_data_null(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job)  # form_data not set → None
     assert app.get_form_data() == {}
 
 
-def test_application_job_fk(tmp_db):
+def test_application_job_fk(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job)
@@ -216,7 +216,7 @@ def test_application_job_fk(tmp_db):
     assert saved.job.company == job.company
 
 
-def test_application_notes_accumulation(tmp_db):
+def test_application_notes_accumulation(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job, notes=None)
@@ -232,7 +232,7 @@ def test_application_notes_accumulation(tmp_db):
 # --- ScanLog: timestamp ---
 
 
-def test_scanlog_scanned_at_is_recent(tmp_db):
+def test_scanlog_scanned_at_is_recent(temporary_database):
     init_db()
     before = datetime.datetime.now()
     log = ScanLog.create(job_url="https://example.com/job/ts", source="greenhouse")
@@ -244,7 +244,7 @@ def test_scanlog_scanned_at_is_recent(tmp_db):
     )
 
 
-def test_scanlog_same_url_different_source_raises(tmp_db):
+def test_scanlog_same_url_different_source_raises(temporary_database):
     """ScanLog.job_url is UNIQUE regardless of source — same URL with different source raises."""
     init_db()
     ScanLog.create(job_url="https://example.com/job/dup-src", source="greenhouse")
@@ -252,7 +252,7 @@ def test_scanlog_same_url_different_source_raises(tmp_db):
         ScanLog.create(job_url="https://example.com/job/dup-src", source="lever")
 
 
-def test_application_applied_at_nullable(tmp_db):
+def test_application_applied_at_nullable(temporary_database):
     """Application.applied_at defaults to None (not set at draft time)."""
     init_db()
     job = _make_job()
@@ -261,7 +261,7 @@ def test_application_applied_at_nullable(tmp_db):
     assert saved.applied_at is None
 
 
-def test_application_next_action_stored(tmp_db):
+def test_application_next_action_stored(temporary_database):
     """Application.next_action field can be stored and retrieved."""
     init_db()
     job = _make_job()
@@ -270,7 +270,7 @@ def test_application_next_action_stored(tmp_db):
     assert saved.next_action == "Follow up on 2026-06-01"
 
 
-def test_job_salary_notes_field(tmp_db):
+def test_job_salary_notes_field(temporary_database):
     """Job.salary_notes is stored and retrievable."""
     init_db()
     job = _make_job(salary_notes="Based on Glassdoor and Levels.fyi estimates.")
@@ -278,17 +278,17 @@ def test_job_salary_notes_field(tmp_db):
     assert "Glassdoor" in saved.salary_notes
 
 
-def test_db_path_reads_env_var(tmp_db):
+def test_db_path_reads_env_var(temporary_database):
     """_db_path() returns value of MOONLIGHTER_DB_PATH env var when set."""
     from moonlighter.core.db import _db_path
 
-    assert _db_path() == tmp_db
+    assert _db_path() == temporary_database
 
 
 # ── Application: campos email (email_ref + current_stage) ─────────────────────
 
 
-def test_application_email_ref_stored_and_retrieved(tmp_db):
+def test_application_email_ref_stored_and_retrieved(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job, email_ref="x7k2mp")
@@ -296,7 +296,7 @@ def test_application_email_ref_stored_and_retrieved(tmp_db):
     assert saved.email_ref == "x7k2mp"
 
 
-def test_application_email_ref_is_null_by_default(tmp_db):
+def test_application_email_ref_is_null_by_default(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job)
@@ -304,7 +304,7 @@ def test_application_email_ref_is_null_by_default(tmp_db):
     assert saved.email_ref is None
 
 
-def test_application_email_ref_unique_constraint(tmp_db):
+def test_application_email_ref_unique_constraint(temporary_database):
     """email_ref is UNIQUE — two apps with the same ref raise IntegrityError."""
     from peewee import IntegrityError
 
@@ -315,7 +315,7 @@ def test_application_email_ref_unique_constraint(tmp_db):
         Application.create(job=_make_job(url="https://x.com/2"), email_ref="abc123")
 
 
-def test_application_email_ref_none_not_constrained(tmp_db):
+def test_application_email_ref_none_not_constrained(temporary_database):
     """Multiple apps with no ref (null) must coexist without violating uniqueness."""
     init_db()
     job1 = _make_job(url="https://x.com/1")
@@ -325,7 +325,7 @@ def test_application_email_ref_none_not_constrained(tmp_db):
     assert Application.select().where(Application.email_ref.is_null(True)).count() == 2
 
 
-def test_application_current_stage_stored_and_retrieved(tmp_db):
+def test_application_current_stage_stored_and_retrieved(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job, current_stage="technical_interview")
@@ -333,14 +333,14 @@ def test_application_current_stage_stored_and_retrieved(tmp_db):
     assert saved.current_stage == "technical_interview"
 
 
-def test_application_current_stage_is_null_by_default(tmp_db):
+def test_application_current_stage_is_null_by_default(temporary_database):
     init_db()
     job = _make_job()
     app = Application.create(job=job)
     assert Application.get_by_id(app.id).current_stage is None
 
 
-def test_application_status_interviews_is_valid(tmp_db):
+def test_application_status_interviews_is_valid(temporary_database):
     """'interviews' (plural) is the correct status for interview stages."""
     init_db()
     job = _make_job()
@@ -348,7 +348,7 @@ def test_application_status_interviews_is_valid(tmp_db):
     assert Application.get_by_id(app.id).status == "interviews"
 
 
-def test_init_db_idempotent_preserves_email_ref(tmp_db):
+def test_init_db_idempotent_preserves_email_ref(temporary_database):
     """Calling init_db() twice does not erase existing data."""
     init_db()
     job = _make_job()
@@ -359,7 +359,7 @@ def test_init_db_idempotent_preserves_email_ref(tmp_db):
     assert saved.current_stage == "live_coding"
 
 
-def test_application_email_ref_lookup_by_ref(tmp_db):
+def test_application_email_ref_lookup_by_ref(temporary_database):
     """It must be possible to look up an Application by email_ref."""
     init_db()
     job = _make_job()
@@ -368,12 +368,12 @@ def test_application_email_ref_lookup_by_ref(tmp_db):
     assert found.email_ref == "lkp001"
 
 
-def test_init_db_migrates_old_application_table(tmp_db):
+def test_init_db_migrates_old_application_table(temporary_database):
     """Old 'application' table (with no email_ref/current_stage) → init_db adds
     the columns via ALTER TABLE (db.py:98-99, 104)."""
     from moonlighter.core.db import db
 
-    db.init(tmp_db)
+    db.init(temporary_database)
     db.connect(reuse_if_open=True)
     db.execute_sql("DROP TABLE IF EXISTS application")
     db.execute_sql("CREATE TABLE application (id INTEGER PRIMARY KEY, status VARCHAR(50))")
@@ -382,9 +382,9 @@ def test_init_db_migrates_old_application_table(tmp_db):
     init_db()  # runs the safe migration
 
     cursor = db.execute_sql("PRAGMA table_info(application)")
-    cols = {row[1] for row in cursor.fetchall()}
-    assert "email_ref" in cols
-    assert "current_stage" in cols
+    columns = {row[1] for row in cursor.fetchall()}
+    assert "email_ref" in columns
+    assert "current_stage" in columns
 
 
 def test_db_path_default_when_env_unset(monkeypatch):
@@ -415,7 +415,7 @@ def test_db_path_follows_moonlighter_home(monkeypatch, tmp_path):
 # --- init_db delegates schema evolution to run_migrations (E7 T2) ─────────────
 
 
-def test_init_db_fresh_db_reaches_latest_version_with_all_columns(tmp_db):
+def test_init_db_fresh_db_reaches_latest_version_with_all_columns(temporary_database):
     """A fresh temp DB, after init_db(), is at schema_version 3 and has every
     column the migrations add (behavior-preserving vs. the old inline ALTERs)."""
     from moonlighter.core.db import db
@@ -424,14 +424,16 @@ def test_init_db_fresh_db_reaches_latest_version_with_all_columns(tmp_db):
     init_db()
 
     assert current_version(db) == len(MIGRATIONS)
-    app_cols = {row[1] for row in db.execute_sql("PRAGMA table_info(application)").fetchall()}
-    assert "email_ref" in app_cols
-    assert "current_stage" in app_cols
-    job_cols = {row[1] for row in db.execute_sql("PRAGMA table_info(job)").fetchall()}
-    assert "closed_at" in job_cols
+    application_columns = {
+        row[1] for row in db.execute_sql("PRAGMA table_info(application)").fetchall()
+    }
+    assert "email_ref" in application_columns
+    assert "current_stage" in application_columns
+    job_columns = {row[1] for row in db.execute_sql("PRAGMA table_info(job)").fetchall()}
+    assert "closed_at" in job_columns
 
 
-def test_init_db_called_twice_stays_at_latest_version(tmp_db):
+def test_init_db_called_twice_stays_at_latest_version(temporary_database):
     """Calling init_db() a second time is a no-op: no error, version unchanged."""
     from moonlighter.core.db import db
     from moonlighter.core.migrations import current_version
@@ -442,14 +444,14 @@ def test_init_db_called_twice_stays_at_latest_version(tmp_db):
     assert current_version(db) == len(MIGRATIONS)
 
 
-def test_init_db_converges_real_db_shape_without_schema_version(tmp_db):
+def test_init_db_converges_real_db_shape_without_schema_version(temporary_database):
     """A DB that already has the migrated columns (the real ~/.moonlighter shape,
     pre-existing before this schema_version table existed) converges to version
     3 with no error — run_migrations must not choke on already-applied columns."""
     from moonlighter.core.db import db
     from moonlighter.core.migrations import current_version
 
-    db.init(tmp_db)
+    db.init(temporary_database)
     db.connect(reuse_if_open=True)
     db.execute_sql(
         "CREATE TABLE application (id INTEGER PRIMARY KEY, status VARCHAR(50), "
@@ -477,47 +479,47 @@ def test_init_db_converges_real_db_shape_without_schema_version(tmp_db):
 # this helper so Job.status can never drift again.
 
 
-def _sync_pair(tmp_db, app_status):
-    os.environ["MOONLIGHTER_DB_PATH"] = tmp_db
+def _sync_pair(temporary_database, app_status):
+    os.environ["MOONLIGHTER_DB_PATH"] = temporary_database
     init_db()
     job = _make_job(status="new")
     app = Application.create(job=job, status=app_status)
     return job, app
 
 
-def test_sync_job_status_submitted_marks_job_applied(tmp_db):
+def test_sync_job_status_submitted_marks_job_applied(temporary_database):
     from moonlighter.core.db import sync_job_status
 
-    job, app = _sync_pair(tmp_db, "submitted")
+    job, app = _sync_pair(temporary_database, "submitted")
     sync_job_status(app)
     assert Job.get_by_id(job.id).status == "applied"
 
 
-def test_sync_job_status_rejected_marks_job_rejected(tmp_db):
+def test_sync_job_status_rejected_marks_job_rejected(temporary_database):
     from moonlighter.core.db import sync_job_status
 
-    job, app = _sync_pair(tmp_db, "rejected")
+    job, app = _sync_pair(temporary_database, "rejected")
     sync_job_status(app)
     assert Job.get_by_id(job.id).status == "rejected"
 
 
-def test_sync_job_status_interview_stages_mark_job_applied(tmp_db):
+def test_sync_job_status_interview_stages_mark_job_applied(temporary_database):
     from moonlighter.core.db import sync_job_status
 
-    job, app = _sync_pair(tmp_db, "interviews")
+    job, app = _sync_pair(temporary_database, "interviews")
     sync_job_status(app)
     assert Job.get_by_id(job.id).status == "applied"
 
 
-def test_sync_job_status_draft_leaves_job_alone(tmp_db):
+def test_sync_job_status_draft_leaves_job_alone(temporary_database):
     from moonlighter.core.db import sync_job_status
 
-    job, app = _sync_pair(tmp_db, "draft")
+    job, app = _sync_pair(temporary_database, "draft")
     sync_job_status(app)
     assert Job.get_by_id(job.id).status == "new"
 
 
-def test_answer_bank_entry_created_and_normalized_question_is_unique(tmp_db):
+def test_answer_bank_entry_created_and_normalized_question_is_unique(temporary_database):
     init_db()
     AnswerBankEntry.create(
         normalized_question="do you have 5 years of python experience",
@@ -543,7 +545,7 @@ def test_answer_bank_entry_created_and_normalized_question_is_unique(tmp_db):
 # --- CVBootstrapDecline ──────────────────────────────────────────────────────
 
 
-def test_cv_bootstrap_declined_is_false_until_recorded(tmp_db):
+def test_cv_bootstrap_declined_is_false_until_recorded(temporary_database):
     from moonlighter.core.db import cv_bootstrap_declined, record_cv_bootstrap_decline
 
     init_db()
@@ -552,7 +554,7 @@ def test_cv_bootstrap_declined_is_false_until_recorded(tmp_db):
     assert cv_bootstrap_declined() is True
 
 
-def test_record_cv_bootstrap_decline_is_idempotent(tmp_db):
+def test_record_cv_bootstrap_decline_is_idempotent(temporary_database):
     from moonlighter.core.db import cv_bootstrap_declined, record_cv_bootstrap_decline
 
     init_db()

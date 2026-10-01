@@ -1,14 +1,16 @@
 import asyncio
+import contextlib
 import os
 import re
 import shutil
+import signal
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
 
 import anthropic
 from anthropic.types import TextBlock
-from moonlighter.core.config import llm_backend, moonlighter_home
+from moonlighter.core.config import DEFAULTS, llm_backend, moonlighter_home
 from moonlighter.core.metrics import record_call
 
 
@@ -39,10 +41,10 @@ _SPEND_LIMIT_PATTERN = re.compile(
 )
 
 
-def is_spend_limit(exc: Exception) -> bool:
+def is_spend_limit(error: Exception) -> bool:
     """True if the exception indicates the LLM's quota/spend limit was exhausted."""
-    msg = str(exc).lower()
-    return bool(_SPEND_LIMIT_PATTERN.search(msg))
+    message = str(error).lower()
+    return bool(_SPEND_LIMIT_PATTERN.search(message))
 
 
 def make_caller(config: dict[str, Any]) -> LLMCaller:
@@ -58,7 +60,12 @@ def make_caller(config: dict[str, Any]) -> LLMCaller:
     """
     backend = llm_backend(config)
     if backend == "cli":
-        return _call_cli
+        timeout_seconds = config.get("llm_timeout_seconds", DEFAULTS["llm_timeout_seconds"])
+
+        async def _call(prompt: str, model: str, cache_prefix: str | None = None) -> str:
+            return await _call_cli(prompt, model, cache_prefix, timeout_seconds=timeout_seconds)
+
+        return _call
     if backend == "cursor":
         chosen = str(config.get("cursor_model") or "").strip()
         return _cursor_caller(chosen or None)
@@ -91,7 +98,13 @@ def _cli_workdir() -> Path:
     return workdir
 
 
-async def _call_cli(prompt: str, model: str, cache_prefix: str | None = None) -> str:
+async def _call_cli(
+    prompt: str,
+    model: str,
+    cache_prefix: str | None = None,
+    *,
+    timeout_seconds: float = DEFAULTS["llm_timeout_seconds"],
+) -> str:
     """Call Claude via the installed `claude` CLI subprocess, sandboxed.
 
     Uses the active Claude Code session — no API key needed.
@@ -103,11 +116,14 @@ async def _call_cli(prompt: str, model: str, cache_prefix: str | None = None) ->
     `ps` and makes argument injection structurally impossible (there's no prompt
     in argv to become a flag). The subprocess runs with an explicit set of
     lockdown flags (S-02/S-14/S-15) and in a neutral cwd outside the repository.
+
+    A call that has not answered within timeout_seconds is killed and raises: one
+    hung for 300 s on 2026-09-25 and nothing but the test harness ended it.
     """
     full = f"{cache_prefix}\n\n{prompt}" if cache_prefix is not None else prompt
     # Strip ANTHROPIC_API_KEY so the CLI uses the claude.ai session (subscription)
     # instead of the API key (which requires separate API credits).
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    environment = {name: value for name, value in os.environ.items() if name != "ANTHROPIC_API_KEY"}
     exe = shutil.which("claude")
     if exe is None:
         raise RuntimeError(
@@ -116,20 +132,34 @@ async def _call_cli(prompt: str, model: str, cache_prefix: str | None = None) ->
         )
     start = perf_counter()
     try:
-        proc = await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             exe,
             *_CLI_SANDBOX_ARGS,
             "-p",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
+            env=environment,
             cwd=str(_cli_workdir()),
+            # Its own process group, so a timeout can take down whatever the CLI
+            # started too: killing the direct process alone left a child running
+            # as an orphan (2026-09-29 review).
+            start_new_session=True,
         )
-        stdout, stderr = await proc.communicate(input=full.encode())
-        if proc.returncode != 0:
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(input=full.encode()), timeout=timeout_seconds
+            )
+        except TimeoutError:
+            _kill_process_group(process.pid)
+            await process.wait()
+            raise RuntimeError(
+                f"claude CLI did not answer within {timeout_seconds} s — killed "
+                "(raise llm_timeout_seconds in config.yaml if your calls are legitimately slow)"
+            ) from None
+        if process.returncode != 0:
             detail = stderr.decode().strip() or stdout.decode().strip()
-            raise RuntimeError(f"claude CLI exited with code {proc.returncode}: {detail[:300]}")
+            raise RuntimeError(f"claude CLI exited with code {process.returncode}: {detail[:300]}")
         return stdout.decode()
     finally:
         record_call(perf_counter() - start)
@@ -293,7 +323,13 @@ async def _call_cursor(
             record_call(perf_counter() - start)
 
 
-def make_api_caller(max_tokens: int = 2048) -> LLMCaller:
+def _kill_process_group(pid: int) -> None:
+    # The group may have exited between the timeout and the kill.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGKILL)
+
+
+def make_api_caller(maximum_tokens: int = 2048) -> LLMCaller:
     """Return an async caller that uses the Anthropic Python SDK.
 
     Requires ANTHROPIC_API_KEY in the environment.
@@ -316,7 +352,7 @@ def make_api_caller(max_tokens: int = 2048) -> LLMCaller:
         try:
             message = await client.messages.create(
                 model=model,
-                max_tokens=max_tokens,
+                max_tokens=maximum_tokens,
                 messages=[{"role": "user", "content": content}],
             )
             input_tokens = message.usage.input_tokens

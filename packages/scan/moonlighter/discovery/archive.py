@@ -29,6 +29,10 @@ class ArchiveResult:
     aged: list[dict[str, str]] = field(default_factory=list)
     max_age_days: int = 0
     failed_companies: list[str] = field(default_factory=list)
+    # Jobs no listing can confirm (source='manual' and the like): the person
+    # opens each link and says which closed. Never archived by age (Alberto's
+    # rule, 2026-08-24).
+    to_confirm: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _eligible_jobs_query(job_id: int | None, company: str | None) -> Any:
@@ -79,16 +83,37 @@ async def archive_stale_jobs(
         aged=aged,
         max_age_days=int(config.get("portal_max_age_days") or 0),
         failed_companies=staleness.failed_companies,
+        to_confirm=[_to_confirm_entry(job, now) for job in staleness.unverifiable],
     )
 
 
+def _to_confirm_entry(job: Job, now: datetime.datetime) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "score": job.score,
+        "status": job.status,
+        "age_days": (now - job.found_at).days if job.found_at else None,
+        "company": job.company,
+        "title": job.title,
+        "url": job.url,
+    }
+
+
 def format_archive_result(result: ArchiveResult) -> str:
-    if not result.archived and not result.aged and not result.failed_companies:
+    if (
+        not result.archived
+        and not result.aged
+        and not result.failed_companies
+        and not result.to_confirm
+    ):
         return "No closed jobs found."
     lines: list[str] = []
     if result.archived:
         lines.append(f"{len(result.archived)} job(s) archived (closed at source):")
-        lines.extend(f"  - {j['company']} / {j['title']} — {j['url']}" for j in result.archived)
+        lines.extend(
+            f"  - {entry['company']} / {entry['title']} — {entry['url']}"
+            for entry in result.archived
+        )
     else:
         lines.append("No closed jobs found.")
     if result.aged:
@@ -96,7 +121,23 @@ def format_archive_result(result: ArchiveResult) -> str:
             f"{len(result.aged)} portal job(s) archived by age "
             f"(older than {result.max_age_days} days; a portal feed cannot be re-checked):"
         )
-        lines.extend(f"  - {j['company']} / {j['title']} — {j['url']}" for j in result.aged)
+        lines.extend(
+            f"  - {entry['company']} / {entry['title']} — {entry['url']}" for entry in result.aged
+        )
+    if result.to_confirm:
+        lines.append("")
+        lines.append(
+            f"{len(result.to_confirm)} job(s) have no listing to check against — "
+            "open each link and say which are closed:"
+        )
+        for entry in result.to_confirm:
+            score = "—" if entry["score"] is None else f"{entry['score']:.1f}"
+            age = "?" if entry["age_days"] is None else entry["age_days"]
+            lines.append(
+                f"  #{entry['id']} | {score} | {entry['status']} | {age}d | "
+                f"{entry['company']} — {entry['title']}"
+            )
+            lines.append(f"    {entry['url']}")
     if result.failed_companies:
         lines.append("")
         lines.append(f"⚠️  Could not check: {', '.join(result.failed_companies)}")

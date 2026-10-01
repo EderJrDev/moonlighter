@@ -12,24 +12,24 @@ async def test_greenhouse_scan_20_companies_concurrent():
     """
     from moonlighter.discovery.sources.http import GreenhouseScanner
 
-    async def slow_get(url, **kwargs):
+    async def slow_get(url, **keyword_arguments):
         await asyncio.sleep(0.02)
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"jobs": []}
-        return resp
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"jobs": []}
+        return response
 
     mock_client = MagicMock()
     mock_client.get = slow_get
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    slugs = [f"company-{i}" for i in range(20)]
+    slugs = [f"company-{index}" for index in range(20)]
 
     with patch("moonlighter.discovery.sources.http.httpx.AsyncClient", return_value=mock_client):
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         await GreenhouseScanner().scan(slugs)
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - start_time
 
     # Concurrent: should be close to 0.02s (one batch), not 0.4s (20 sequential calls)
     assert elapsed < 0.3, f"Expected < 0.3s (concurrent), got {elapsed:.3f}s"
@@ -39,24 +39,24 @@ async def test_lever_scan_15_companies_concurrent():
     """15 Lever companies fetched concurrently."""
     from moonlighter.discovery.sources.http import LeverScanner
 
-    async def slow_get(url, **kwargs):
+    async def slow_get(url, **keyword_arguments):
         await asyncio.sleep(0.02)
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = []
-        return resp
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = []
+        return response
 
     mock_client = MagicMock()
     mock_client.get = slow_get
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    slugs = [f"company-{i}" for i in range(15)]
+    slugs = [f"company-{index}" for index in range(15)]
 
     with patch("moonlighter.discovery.sources.http.httpx.AsyncClient", return_value=mock_client):
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         await LeverScanner().scan(slugs)
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - start_time
 
     assert elapsed < 0.3, f"Expected < 0.3s (concurrent), got {elapsed:.3f}s"
 
@@ -65,24 +65,24 @@ async def test_ashby_scan_10_companies_concurrent():
     """10 Ashby companies fetched concurrently via POST."""
     from moonlighter.discovery.sources.http import AshbyScanner
 
-    async def slow_post(url, **kwargs):
+    async def slow_post(url, **keyword_arguments):
         await asyncio.sleep(0.02)
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"data": {"jobPostings": []}}
-        return resp
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"data": {"jobPostings": []}}
+        return response
 
     mock_client = MagicMock()
     mock_client.post = slow_post
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    slugs = [f"company-{i}" for i in range(10)]
+    slugs = [f"company-{index}" for index in range(10)]
 
     with patch("moonlighter.discovery.sources.http.httpx.AsyncClient", return_value=mock_client):
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         await AshbyScanner().scan(slugs)
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - start_time
 
     assert elapsed < 0.3, f"Expected < 0.3s (concurrent), got {elapsed:.3f}s"
 
@@ -119,31 +119,40 @@ async def test_evaluate_10_jobs_concurrent_faster_than_sequential():
         return _response
 
     profile = {}
-    jobs = [(f"Co{i}", f"Eng {i}", f"Job description {i}") for i in range(10)]
+    jobs = [(f"Co{index}", f"Eng {index}", f"Job description {index}") for index in range(10)]
 
-    t0 = time.perf_counter()
+    start_time = time.perf_counter()
     await asyncio.gather(
         *[
             evaluate_job(
-                company=c,
-                title=t,
-                description=d,
+                company=company,
+                title=title,
+                description=description,
                 profile=profile,
                 model="test",
                 _caller=slow_caller,
+                location=None,
+                remote_type=None,
             )
-            for c, t, d in jobs
+            for company, title, description in jobs
         ]
     )
-    concurrent_elapsed = time.perf_counter() - t0
+    concurrent_elapsed = time.perf_counter() - start_time
 
     # Sequential baseline (just measure)
-    t0 = time.perf_counter()
-    for c, t, d in jobs:
+    start_time = time.perf_counter()
+    for company, title, description in jobs:
         await evaluate_job(
-            company=c, title=t, description=d, profile=profile, model="test", _caller=slow_caller
+            company=company,
+            title=title,
+            description=description,
+            profile=profile,
+            model="test",
+            _caller=slow_caller,
+            location=None,
+            remote_type=None,
         )
-    sequential_elapsed = time.perf_counter() - t0
+    sequential_elapsed = time.perf_counter() - start_time
 
     assert concurrent_elapsed < sequential_elapsed * 0.5, (
         f"Concurrent ({concurrent_elapsed:.3f}s) should be at least 2x faster than sequential ({sequential_elapsed:.3f}s)"
@@ -178,34 +187,36 @@ async def test_evaluate_batch_size_10_processes_all():
 
     profile = {}
     BATCH_SIZE = 10
-    all_jobs = [(f"Co{i}", f"Eng{i}", f"desc{i}") for i in range(25)]
+    all_jobs = [(f"Co{index}", f"Eng{index}", f"desc{index}") for index in range(25)]
     results = []
 
-    for i in range(0, len(all_jobs), BATCH_SIZE):
-        batch = all_jobs[i : i + BATCH_SIZE]
+    for index in range(0, len(all_jobs), BATCH_SIZE):
+        batch = all_jobs[index : index + BATCH_SIZE]
         batch_results = await asyncio.gather(
             *[
                 evaluate_job(
-                    company=c,
-                    title=t,
-                    description=d,
+                    company=company,
+                    title=title,
+                    description=description,
                     profile=profile,
                     model="test",
                     _caller=fast_caller,
+                    location=None,
+                    remote_type=None,
                 )
-                for c, t, d in batch
+                for company, title, description in batch
             ]
         )
         results.extend(batch_results)
 
     assert len(results) == 25
-    assert all(r.score == 7.0 for r in results)
+    assert all(result.score == 7.0 for result in results)
 
 
 # ── Queries no DB ─────────────────────────────────────────────────────────────
 
 
-async def test_list_jobs_1000_records_fast(tmp_db):
+async def test_list_jobs_1000_records_fast(temporary_database):
     """list_jobs with 1000 records in DB returns in < 500ms."""
     from moonlighter.core.db import Job, init_db
 
@@ -213,39 +224,39 @@ async def test_list_jobs_1000_records_fast(tmp_db):
 
     # Insert 1000 jobs
     with Job._meta.database.atomic():
-        for i in range(1000):
+        for index in range(1000):
             Job.create(
                 source="greenhouse",
-                company=f"Company{i}",
-                title=f"Engineer {i}",
-                url=f"https://example.com/jobs/{i}",
-                score=float(i % 10),
+                company=f"Company{index}",
+                title=f"Engineer {index}",
+                url=f"https://example.com/jobs/{index}",
+                score=float(index % 10),
                 status="new",
             )
 
     from moonlighter.server import list_jobs
 
-    t0 = time.perf_counter()
+    start_time = time.perf_counter()
     result = await list_jobs(status="new", limit=20)
-    elapsed = time.perf_counter() - t0
+    elapsed = time.perf_counter() - start_time
 
     assert elapsed < 0.5, f"list_jobs with 1000 records took {elapsed:.3f}s, expected < 0.5s"
     assert result is not None
 
 
-async def test_scan_log_dedup_1000_urls_fast(tmp_db):
+async def test_scan_log_dedup_1000_urls_fast(temporary_database):
     """Dedup check against ScanLog with 1000 entries completes in < 200ms."""
     from moonlighter.core.db import ScanLog, init_db
 
     init_db()
 
     with ScanLog._meta.database.atomic():
-        for i in range(1000):
-            ScanLog.create(job_url=f"https://example.com/jobs/{i}", source="greenhouse")
+        for index in range(1000):
+            ScanLog.create(job_url=f"https://example.com/jobs/{index}", source="greenhouse")
 
-    t0 = time.perf_counter()
+    start_time = time.perf_counter()
     seen_urls = {row.job_url for row in ScanLog.select(ScanLog.job_url)}
-    elapsed = time.perf_counter() - t0
+    elapsed = time.perf_counter() - start_time
 
     assert elapsed < 0.2, f"ScanLog dedup check took {elapsed:.3f}s, expected < 0.2s"
     assert len(seen_urls) == 1000

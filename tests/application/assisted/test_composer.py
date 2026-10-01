@@ -885,3 +885,42 @@ def test_importing_the_composer_does_not_pull_in_the_db_layer():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     ).stdout
     assert out.strip() == "False False"
+
+
+def _select_with(option_count: int) -> FormQuestion:
+    # The label avoids every pre_populate_answers rule (country, location, ...) so
+    # the question would otherwise reach the LLM.
+    return FormQuestion(
+        label="Which office would you join?",
+        kind=QuestionKind.SINGLE_SELECT,
+        required=True,
+        options=tuple(f"Office {number}" for number in range(1, option_count + 1)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_choice_with_more_than_200_options_is_a_gap_without_the_llm():
+    # A Lever select of 3,301 options put ~26k tokens of option list into one prompt.
+    prompts = []
+
+    async def records_the_call(prompt: str, model: str, cache_prefix: str | None = None) -> str:
+        prompts.append(prompt)
+        return "Office 1"
+
+    composed = await compose_answers([_select_with(201)], PROFILE, {}, JOB, records_the_call)
+    assert prompts == []
+    assert composed[0].answer is None
+    assert composed[0].gap_reason == "pick your answer from the 201 options on the form"
+
+
+@pytest.mark.asyncio
+async def test_a_choice_with_200_options_still_goes_to_the_llm():
+    prompts = []
+
+    async def picks_the_last(prompt: str, model: str, cache_prefix: str | None = None) -> str:
+        prompts.append(prompt)
+        return "Office 200"
+
+    composed = await compose_answers([_select_with(200)], PROFILE, {}, JOB, picks_the_last)
+    assert len(prompts) == 1
+    assert composed[0].answer == "Office 200"

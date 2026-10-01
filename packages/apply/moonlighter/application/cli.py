@@ -4,7 +4,7 @@
     moonlighter-apply prepare JOB_ID --paste FILE # questions read from a pasted page (- = stdin)
     moonlighter-apply prepare --url URL           # ingest the posting first (no LLM), then prepare
     moonlighter-apply prepare --url URL --company X --title Y  # non-ATS page: name it yourself
-    moonlighter-apply doctor
+    moonlighter-apply doctor [--online]           # --online: request the CV header's links
     moonlighter-apply bootstrap-cv [--force] [--skip]
 
 Prints one JSON document (sheet_result_to_dict) on stdout; logs on stderr.
@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from moonlighter.application.assisted.results import SheetKind, sheet_result_to_dict
 from moonlighter.application.assisted.service import (
     failed_sheet,
@@ -25,6 +26,7 @@ from moonlighter.application.assisted.service import (
     prepare_application_from_paste,
 )
 from moonlighter.application.cvgen.bootstrap import BootstrapError, bootstrap_cv_pool
+from moonlighter.application.cvgen.links import link_report
 from moonlighter.core.cli import (
     EXIT_NOTHING,
     EXIT_OK,
@@ -33,6 +35,7 @@ from moonlighter.core.cli import (
     doctor_payload,
     run,
 )
+from moonlighter.core.config import ConfigError, load_config
 from moonlighter.core.ingest import job_from_url
 from moonlighter.core.llm import make_caller
 from moonlighter.core.slices import slice_epilog
@@ -67,7 +70,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare.add_argument(
         "--paste", metavar="FILE", help="page text to read questions from; - for stdin"
     )
-    sub.add_parser("doctor", help="where the state lives and whether the config loads, as JSON")
+    doctor = sub.add_parser(
+        "doctor", help="where the state lives and whether the config loads, as JSON"
+    )
+    doctor.add_argument(
+        "--online",
+        action="store_true",
+        help="also request every link in the CV templates' header; exit 1 if one is broken",
+    )
     bootstrap_cv = sub.add_parser(
         "bootstrap-cv", help="draft a CV pool + template from profile.yaml"
     )
@@ -75,29 +85,53 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     bootstrap_cv.add_argument(
         "--skip", action="store_true", help="decline the feature — never offered again, no LLM call"
     )
-    args = parser.parse_args(argv)
-    if args.command == "prepare" and (args.job_id is None) == (args.url is None):
+    arguments = parser.parse_args(argv)
+    if arguments.command == "prepare" and (arguments.job_id is None) == (arguments.url is None):
         parser.error("prepare takes exactly one of JOB_ID or --url")
-    if args.command == "prepare" and args.url is None and (args.company or args.title):
+    if (
+        arguments.command == "prepare"
+        and arguments.url is None
+        and (arguments.company or arguments.title)
+    ):
         parser.error("--company and --title are only meaningful with --url")
-    return args
+    return arguments
 
 
 def _read_paste(source: str) -> str:
     return sys.stdin.read() if source == "-" else Path(source).read_text()
 
 
-async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
-    if args.command == "doctor":
-        return doctor_payload()
+async def _run(arguments: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    if arguments.command == "doctor":
+        payload, code = doctor_payload()
+        if arguments.online:
+            try:
+                config = load_config()
+            except (ConfigError, OSError, yaml.YAMLError) as error:
+                # The payload above already reports the broken config; --online
+                # adds why the links were not checked, never a crash (exit 3).
+                payload["links"] = None
+                payload["links_error"] = f"config does not load: {error}"
+                return payload, code
+            payload["links"] = await link_report(config)
+            if not payload["links"]:
+                # An empty list read the same as "every link works".
+                payload["links_note"] = (
+                    "no CV template with header links found in cv.template_dir; nothing checked"
+                )
+            if code == EXIT_OK and any(link["ok"] is False for link in payload["links"]):
+                code = EXIT_NOTHING
+        return payload, code
     config, profile = bootstrap()
-    if args.command == "bootstrap-cv":
-        if args.skip:
+    if arguments.command == "bootstrap-cv":
+        if arguments.skip:
             from moonlighter.core.db import record_cv_bootstrap_decline
 
             record_cv_bootstrap_decline()
             return {"kind": "cv_bootstrap_skipped"}, EXIT_OK
-        outcome = await bootstrap_cv_pool(profile, config, make_caller(config), force=args.force)
+        outcome = await bootstrap_cv_pool(
+            profile, config, make_caller(config), force=arguments.force
+        )
         return (
             {
                 "kind": "cv_bootstrap",
@@ -108,21 +142,21 @@ async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             },
             EXIT_OK,
         )
-    job_id = args.job_id
-    if args.url is not None:
-        job = await job_from_url(args.url, company=args.company, title=args.title)
+    job_id = arguments.job_id
+    if arguments.url is not None:
+        job = await job_from_url(arguments.url, company=arguments.company, title=arguments.title)
         if job is None:
             failed = failed_sheet(
                 SheetKind.POSTING_UNREADABLE,
-                f"The posting at {args.url} is not on a known ATS or could not be read. "
+                f"The posting at {arguments.url} is not on a known ATS or could not be read. "
                 "Pass --company and --title to ingest it anyway, or give a job id.",
-                apply_url=args.url,
+                apply_url=arguments.url,
             )
             return sheet_result_to_dict(failed), EXIT_NOTHING
         job_id = job.id
-    if args.paste is not None:
+    if arguments.paste is not None:
         result = await prepare_application_from_paste(
-            job_id, _read_paste(args.paste), config, profile
+            job_id, _read_paste(arguments.paste), config, profile
         )
     else:
         result = await prepare_application(job_id, config, profile)
@@ -131,5 +165,5 @@ async def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
 
 def main() -> None:  # pragma: no cover - entry point (boundary)
-    args = parse_args()
-    sys.exit(run(lambda: _run(args), usage=USAGE_ERRORS, expected=EXPECTED_ERRORS))
+    arguments = parse_args()
+    sys.exit(run(lambda: _run(arguments), usage=USAGE_ERRORS, expected=EXPECTED_ERRORS))

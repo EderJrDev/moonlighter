@@ -7,6 +7,7 @@ from typing import Any, Literal
 from moonlighter.application.answers.cv import configured_cv_path
 from moonlighter.core.config import browser_executable, llm_backend, moonlighter_home
 from moonlighter.core.llm import cursor_executable
+from moonlighter.discovery.evaluator import LOCATION_PRECEDENCES
 
 
 @dataclass
@@ -28,6 +29,7 @@ def validate_startup(
     cv = cv_path or str(configured or moonlighter_home() / "cv.pdf")
     checks = [
         _check_profile(profile),
+        _check_location_precedence(profile),
         _check_llm_backend(config),
         _check_cv(cv),
         _check_browser(config),
@@ -43,6 +45,19 @@ def _check_profile(profile: dict[str, Any]) -> StartupWarning | None:
         "warn",
         f"{moonlighter_home() / 'profile.yaml'} is empty. "
         "Fill in skills, experience, and criteria for useful LLM evaluations.",
+    )
+
+
+def _check_location_precedence(profile: dict[str, Any]) -> StartupWarning | None:
+    """An unknown value silently meant "specific" (2026-09-29 review)."""
+    criteria = profile.get("criteria") or {}
+    value = criteria.get("location_precedence") if isinstance(criteria, dict) else None
+    if value is None or value in LOCATION_PRECEDENCES:
+        return None
+    return StartupWarning(
+        "warn",
+        f"profile.yaml: criteria.location_precedence is {value!r}; it must be one of "
+        f'{", ".join(LOCATION_PRECEDENCES)}. Scoring uses "specific" until it is fixed.',
     )
 
 

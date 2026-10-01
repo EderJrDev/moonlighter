@@ -57,14 +57,14 @@ def _rejected_pair(company, days_ago, url):
 
 
 class TestCompanyAges:
-    def test_collects_ages_case_insensitively(self, tmp_db):
+    def test_collects_ages_case_insensitively(self, temporary_database):
         # The live case: 'Holepunch' on one row, 'holepunch' on another.
         init_db()
         _rejected_pair("Holepunch", 8, "https://x.com/rej/1")
         ages = company_rejection_ages(now=NOW)
         assert ages["holepunch"] == [8.0]
 
-    def test_ignores_non_rejected_applications(self, tmp_db):
+    def test_ignores_non_rejected_applications(self, temporary_database):
         init_db()
         job = Job.create(
             source="greenhouse", company="acme", title="Eng", url="https://x.com/rej/2"

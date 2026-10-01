@@ -6,7 +6,7 @@
 
 Scans the job boards you choose, scores each posting against your profile, and drafts a complete answer sheet from your own data, flagging what it can't answer.
 
-<!-- facts -->1,700+ tests · 100% branch coverage (CI-gated) · 5 packages on PyPI · mypy strict<!-- /facts -->
+<!-- facts -->1,900+ tests · 100% branch coverage (CI-gated) · 5 packages on PyPI · mypy strict<!-- /facts -->
 
 **[Get started →](getting-started/install.md)**
 
@@ -31,7 +31,7 @@ The model can still get an answer wrong — which is why every sheet is yours to
 - [Tailored CV](guides/tailored-cv.md) — a one-page LaTeX CV per posting, built from bullets you curated
 - [Answer bank](guides/answer-bank.md) — screening answers you approved, reused on the next application
 - [Command line](reference/cli.md) — a JSON CLI per package, for shells and cron jobs
-- [MCP tools](reference/mcp-tools.md) — the 17 tools Claude calls on your behalf
+- [MCP tools](reference/mcp-tools.md) — the 18 tools Claude calls on your behalf
 - [Extensions](guides/extensions.md) — add a job source as a separate package
 
 The decisions behind the design, and what each one cost, are on the [Engineering](engineering.md) page. Objections and fixes are in the [FAQ](faq.md).

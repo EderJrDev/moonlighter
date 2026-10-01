@@ -17,7 +17,7 @@ uvx moonlighter-apply doctor
 
 Every command prints one JSON document on stdout.
 
-- **The real questions** — where the ATS publishes its form (Greenhouse, Recruitee), the questions, required flags and options come straight from its API.
+- **The real questions** — where the ATS publishes its form (Greenhouse, Recruitee, Workable, Lever), the questions, required flags and options come straight from it; InHire tells you up front which fields its form requires.
 - **Any other form** — paste the page text and the questions are read from it; this works on any ATS, login walls included.
 - **Gaps instead of guesses** — answers are drafted from a filtered part of your profile. A question it has no basis for comes back to you as a gap, and questions it recognises as salary, compliance or demographics are filled from your config or left for you, never answered by the model.
 - **A tailored CV, if you want one** — a one-page LaTeX CV for the posting, its bullets chosen from a pool you wrote; `bootstrap-cv` drafts a first pool from your profile.

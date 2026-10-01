@@ -44,6 +44,7 @@ nav:
       - Tailored CV: guides/tailored-cv.md
       - Answer bank: guides/answer-bank.md
       - Extensions: guides/extensions.md
+      - Finding companies: guides/finding-companies.md
   - Reference:
       - CLI: reference/cli.md
       - MCP tools: reference/mcp-tools.md

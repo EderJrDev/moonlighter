@@ -202,17 +202,21 @@ _RULES: list[tuple[str, _RuleFn]] = [
     # first+last convention; it must precede the first/last rules only in intent,
     # not in matching (the anchors are disjoint), but it must precede "^nome" in
     # the PT-BR block below, which would otherwise reduce it to a first name.
-    (r"^(your\s+)?full\s+name", lambda p: p.get("name") or ""),
+    (r"^(your\s+)?full\s+name", lambda profile: profile.get("name") or ""),
+    # A bare "Name" (Ashby's application page) is the full name. Anchored at both
+    # ends: "Name of your current employer" is a different question. It went to
+    # the LLM, which answered "I DON'T KNOW" (ElevenLabs #6675, 2026-09-25).
+    (r"^(your\s+)?name$", lambda profile: profile.get("name") or ""),
     (r"^first\s+name", _first_name),
     (r"^last\s+name", _last_name),
     (r"preferred\s+(first\s+)?name", _first_name),
-    (r"^(phone|telephone|mobile|cel)", lambda p: p.get("phone") or ""),
-    (r"^e-?mail", lambda p: p.get("email") or ""),
-    (r"linkedin", lambda p: p.get("linkedin") or ""),
+    (r"^(phone|telephone|mobile|cel)", lambda profile: profile.get("phone") or ""),
+    (r"^e-?mail", lambda profile: profile.get("email") or ""),
+    (r"linkedin", lambda profile: profile.get("linkedin") or ""),
     # A "Github" field became a gap on the live Resend form (2026-08-20):
     # linkedin and website had rules, github never did.
-    (r"github", lambda p: p.get("github") or ""),
-    (r"^(website|portfolio|personal\s+site)", lambda p: p.get("website") or ""),
+    (r"github", lambda profile: profile.get("github") or ""),
+    (r"^(website|portfolio|personal\s+site)", lambda profile: profile.get("website") or ""),
     # Compensation — filled statically so the salary figure never reaches the LLM (E2).
     # The label must be a short *value* question: an optional lead (desired/expected/…/minimum/base/total),
     # the keyword, an optional whitelisted value-qualifier (expectation/range/salari…/…),
@@ -245,27 +249,31 @@ _RULES: list[tuple[str, _RuleFn]] = [
     # Contact (PT-BR) — "preferência" and "sobrenome" BEFORE "^nome" (order matters)
     (r"nome\s+de\s+prefer|prefer.*nome", _first_name),
     (r"^sobrenome", _last_name),
-    (r"^nome\s+completo", lambda p: p.get("name") or ""),
+    (r"^nome\s+completo", lambda profile: profile.get("name") or ""),
     (r"^nome", _first_name),
-    (r"^(telefone|celular)", lambda p: p.get("phone") or ""),
+    (r"^(telefone|celular)", lambda profile: profile.get("phone") or ""),
     # Location
     (r"location\s*\(?city", _city),
     (r"localiza|^cidade", _city),
     (r"^city$", _city),
-    (r"^country$", lambda p: p.get("country_en") or None),
-    (r"^pa[ií]s", lambda p: p.get("country_pt") or None),
-    (r"^address$", lambda p: p.get("location") or None),
+    (r"^country$", lambda profile: profile.get("country_en") or None),
+    (r"^pa[ií]s", lambda profile: profile.get("country_pt") or None),
+    (r"^address$", lambda profile: profile.get("location") or None),
     # Work authorization / visa / sponsorship: NOT handled here — dealt with in a
     # country-dependent way in work_auth (a fixed answer would be a lie for a US job).
     # Languages
     (
         r"english\s+level|english\s+proficiency|profici.*english",
-        lambda p: p.get("english_level") or None,
+        lambda profile: profile.get("english_level") or None,
     ),
     # Office availability — reads from the profile; False → "No", absent → None (LLM decides)
     (
         r"work\s+from\s+the\s+office|office\s+at\s+least",
-        lambda p: ("Yes" if p["office_available"] else "No") if "office_available" in p else None,
+        lambda profile: (
+            ("Yes" if profile["office_available"] else "No")
+            if "office_available" in profile
+            else None
+        ),
     ),
     # EEO/demographic self-identification is NOT here — see `demographic_answer` and
     # `_DEMOGRAPHIC_RULES` above. A demographic label never reaches this ladder,
@@ -277,7 +285,7 @@ _RULES: list[tuple[str, _RuleFn]] = [
 ]
 
 _COMPILED: list[tuple[re.Pattern[str], _RuleFn]] = [
-    (re.compile(pattern, re.IGNORECASE), fn) for pattern, fn in _RULES
+    (re.compile(pattern, re.IGNORECASE), rule) for pattern, rule in _RULES
 ]
 
 
@@ -289,13 +297,13 @@ def _static_answer(label: str, profile: dict[str, Any]) -> str | None:
     never reach the prompt), so even without a configured preference the result is ""
     rather than None.
     """
-    for pattern, fn in _COMPILED:
+    for pattern, rule in _COMPILED:
         if pattern.search(label):
-            if fn is _salary_expectation:
-                # Called directly, not through `fn`: this is the one rule that
+            if rule is _salary_expectation:
+                # Called directly, not through `rule`: this is the one rule that
                 # needs the label, to check the currency/period it asks for.
                 return _salary_expectation(profile, label)
-            return fn(profile) or None
+            return rule(profile) or None
     return None
 
 
@@ -312,13 +320,24 @@ def _clean_label(field_label: str) -> str:
     A label whose first line is real text keeps every line, since collapsing it
     would let unrelated rules match.
     """
-    lines = [ln.strip() for ln in field_label.strip().splitlines()]
-    kept = [ln for ln in lines if ln and not _DECORATION.fullmatch(ln)]
-    return (kept[0] if kept else "").rstrip("*").strip()
+    lines = [line.strip() for line in field_label.strip().splitlines()]
+    kept = [line for line in lines if line and not _DECORATION.fullmatch(line)]
+    label = kept[0] if kept else ""
+    previous = None
+    while previous != label:
+        previous = label
+        label = _TRAILING_MARKER.sub("", label)
+    return label
 
 
 # A line that carries no question: a required marker, or a dial code.
 _DECORATION = re.compile(r"[*†‡]+|\+\d{1,4}")
+# What trails a label without being part of it: a marker ("*", "(required)",
+# "(obrigatório)", "(optional)", "(opcional)") or a colon. "Name:" and
+# "Name (required)" went unmatched while "Name *" matched (2026-09-29 review).
+_TRAILING_MARKER = re.compile(
+    r"\s*(?:[*†‡:]+|\((?:required|obrigat[óo]rio|optional|opcional)\))\s*$", re.IGNORECASE
+)
 
 
 def pre_populate_answers(
@@ -336,7 +355,7 @@ def pre_populate_answers(
     """
     from moonlighter.application.answers.work_auth import infer_country, resolve_work_auth
 
-    cfg = config or {}
+    options = config or {}
     country = infer_country(job_location, job_remote_type)
 
     result: dict[str, str] = {}
@@ -344,7 +363,7 @@ def pre_populate_answers(
         clean = _clean_label(field_label)
         # Work authorization is country-dependent (conservative); the rest comes
         # from the static rules. Fields with no match are left for the LLM to answer.
-        answer = resolve_work_auth(clean, country, cfg)
+        answer = resolve_work_auth(clean, country, options)
         if answer is None:
             answer = _static_answer(clean, profile)
         if answer is not None:

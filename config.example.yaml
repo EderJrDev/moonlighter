@@ -28,6 +28,9 @@ browser_path: ""
 # Anything else is rejected at startup rather than silently falling back.
 llm_backend: cli
 
+# Seconds a CLI call may run before it is killed and fails (cli backend only).
+llm_timeout_seconds: 180
+
 # Main model (answer generation) and evaluation model (cheaper, for scoring jobs).
 llm_model: claude-sonnet-4-6
 eval_model: claude-haiku-4-5-20251001
